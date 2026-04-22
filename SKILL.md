@@ -103,7 +103,7 @@ python3 -m py_compile scripts/extract_invoices.py scripts/run_pipeline.py
 - `script_error`
 - `skipped`
 
-如果需要字段级解释、真实回归样例或状态语义，直接看本仓库的 [README.md](README.md)。
+如果需要字段级解释或状态语义，直接看本仓库的 [README.md](README.md)。
 
 ## 当前查验策略
 
@@ -118,9 +118,3 @@ python3 -m py_compile scripts/extract_invoices.py scripts/run_pipeline.py
 - 电子发票不一定填发票代码；但金额字段一定要和页面当前要求一致
 - `verified.json` 是后续汇总、筛选和人工复核的主结果文件；不要只看终端日志
 - 结果截图是判断“成功弹层 / 次数超限 / 系统异常 / 验证码错误”的第一手证据
-
-## 仓库内维护这个 skill 时
-
-- 优先保持 `SKILL.md` 精简，只放触发条件、主流程、关键命令和高价值注意点
-- 详细说明、真实样例和用户向文档放在 `README.md`
-- 更新查验状态或输出结构后，要同步检查 `README.md` 和 `agents/openai.yaml`
