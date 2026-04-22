@@ -1,0 +1,16 @@
+{
+  "name": "verify-vat-invoices",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "extract": "python3 scripts/extract_invoices.py",
+    "pipeline": "python3 scripts/run_pipeline.py",
+    "verify": "node scripts/verify_invoices.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "playwright": "^1.0.0"
+  }
+}

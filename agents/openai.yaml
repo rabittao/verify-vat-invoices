@@ -1,0 +1,4 @@
+interface:
+  display_name: "Verify VAT Invoices"
+  short_description: "批量扫描 PDF 发票并完成字段抽取、税站查验与结果留痕"
+  default_prompt: "Use $verify-vat-invoices to scan PDF invoices, extract verification fields, run the tax-site check, and summarize the structured results."
