@@ -3,8 +3,10 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
+    "api": "uvicorn app.main:app --reload",
     "extract": "python3 scripts/extract_invoices.py",
     "pipeline": "python3 scripts/run_pipeline.py",
+    "test": "pytest -q",
     "verify": "node scripts/verify_invoices.js"
   },
   "engines": {

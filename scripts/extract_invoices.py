@@ -139,6 +139,11 @@ def get_qwen_vl_key() -> str | None:
     return api_key or None
 
 
+def get_qwen_invoice_model() -> str:
+    model = os.environ.get("QWEN_INVOICE_MODEL", "").strip()
+    return model or "qwen3.5-plus"
+
+
 def resolve_render_support(preferred_backend: str) -> RenderSupport:
     available = ["pymupdf"] if fitz is not None else []
     backend = preferred_backend if preferred_backend in available else None
@@ -200,8 +205,9 @@ def parse_json_object(raw_text: str) -> dict[str, Any]:
 def call_qwen_vision_invoice(api_key: str, image_path: Path, pdf_path: str, page_number: int) -> dict[str, Any]:
     prompt = VISION_USER_PROMPT_TEMPLATE.format(source_pdf=pdf_path, page_number=page_number)
     image_data = encode_image_data_url(image_path)
+    model = get_qwen_invoice_model()
     payload = {
-        "model": "qwen-vl-max",
+        "model": model,
         "messages": [
             {"role": "system", "content": VISION_SYSTEM_PROMPT},
             {
@@ -242,7 +248,8 @@ def call_vision_for_invoice_extraction(image_path: Path, pdf_path: str, page_num
     qwen_key = get_qwen_vl_key()
     if not qwen_key:
         raise RuntimeError("QWEN_API_KEY is required for invoice vision extraction")
-    return call_qwen_vision_invoice(qwen_key, image_path, pdf_path, page_number), "qwen-vl-max"
+    model = get_qwen_invoice_model()
+    return call_qwen_vision_invoice(qwen_key, image_path, pdf_path, page_number), model
 
 
 def clean_text(text: str) -> str:

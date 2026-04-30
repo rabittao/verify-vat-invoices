@@ -31,7 +31,7 @@ const {
 const VERIFY_URL = "https://inv-veri.chinatax.gov.cn/?a=qyam";
 const MAX_FULL_TEXT_ATTEMPTS = 6;
 const MAX_REFRESH_RETRIES = 40;
-const VERIFY_SINGLE_INVOICE_TIMEOUT_MS = 4 * 60 * 1000; // 与验证码重试预算对齐，避免真实 captcha_error 被外层超时盖掉
+const VERIFY_SINGLE_INVOICE_TIMEOUT_MS = (MAX_FULL_TEXT_ATTEMPTS + 1) * 60 * 1000; // 预算需覆盖完整 captcha 重试，否则真实 captcha_error 会被 script_error timeout 掩盖
 
 loadEnvFile(path.resolve(__dirname, "..", ".env"));
 
@@ -105,6 +105,56 @@ function createSkippedResult(record, message, status = "skipped") {
     result_screenshot: null,
     result_text: null,
   };
+}
+
+function describeError(error) {
+  if (!error) {
+    return "Unknown error";
+  }
+
+  const parts = [];
+  const name = error.name || "Error";
+  const message = error.message || String(error);
+  parts.push(`${name}: ${message}`);
+
+  for (const key of ["code", "errno", "type"]) {
+    if (error[key] !== undefined && error[key] !== null && error[key] !== "") {
+      parts.push(`${key}=${error[key]}`);
+    }
+  }
+
+  if (error.cause) {
+    const cause = error.cause;
+    const causeMessage = cause.message || String(cause);
+    const causeName = cause.name || "Error";
+    parts.push(`cause=${causeName}: ${causeMessage}`);
+    for (const key of ["code", "errno", "type"]) {
+      if (cause[key] !== undefined && cause[key] !== null && cause[key] !== "") {
+        parts.push(`cause_${key}=${cause[key]}`);
+      }
+    }
+  }
+
+  const stack = String(error.stack || "")
+    .split("\n")
+    .slice(1, 5)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" | ");
+  if (stack) {
+    parts.push(`stack=${stack}`);
+  }
+
+  return parts.join("; ");
+}
+
+function buildContextualError(context, error, extra = {}) {
+  const meta = Object.entries(extra)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+  const prefix = meta ? `${context} (${meta})` : context;
+  return new Error(`${prefix}: ${describeError(error)}`);
 }
 
 async function requirePlaywright() {
@@ -279,16 +329,24 @@ async function callOpenRouterVision(imageBuffer, prompt, options = {}) {
     maxTokens: options.maxTokens || 20,
   });
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "HTTP-Referer": "https://github.com/verify-vat-invoices",
-      "X-Title": "verify-vat-invoices",
-    },
-    body: JSON.stringify(payload),
-  });
+  let response;
+  try {
+    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        "HTTP-Referer": "https://github.com/verify-vat-invoices",
+        "X-Title": "verify-vat-invoices",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw buildContextualError("OpenRouter fetch failed", error, {
+      model: OPENROUTER_CAPTCHA_MODEL,
+      max_tokens: options.maxTokens || 20,
+    });
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -307,8 +365,14 @@ async function callOpenRouterVision(imageBuffer, prompt, options = {}) {
 
 async function captureCaptchaWithVisionModel(imageBuffer, promptText) {
   const prompt = buildCaptchaPrompt(promptText);
-
-  const apiResult = await callOpenRouterVision(imageBuffer, prompt);
+  let apiResult;
+  try {
+    apiResult = await callOpenRouterVision(imageBuffer, prompt);
+  } catch (error) {
+    throw buildContextualError("Captcha OCR request failed", error, {
+      model: OPENROUTER_CAPTCHA_MODEL,
+    });
+  }
   return {
     primaryCaptcha: apiResult.result,
     alternativeCaptchas: [],
@@ -337,11 +401,19 @@ async function classifyVerificationScreenshot(screenshotPath) {
   }
 
   const screenshotBuffer = fs.readFileSync(screenshotPath);
-  const apiResult = await callOpenRouterVision(
-    screenshotBuffer,
-    buildVerificationScreenshotPrompt(),
-    { maxTokens: 120 }
-  );
+  let apiResult;
+  try {
+    apiResult = await callOpenRouterVision(
+      screenshotBuffer,
+      buildVerificationScreenshotPrompt(),
+      { maxTokens: 120 }
+    );
+  } catch (error) {
+    throw buildContextualError("Verification screenshot classification failed", error, {
+      model: OPENROUTER_CAPTCHA_MODEL,
+      screenshot: path.basename(screenshotPath),
+    });
+  }
   return {
     classified: parseScreenshotVerificationClassification(apiResult.rawContent || apiResult.result),
     rawOutput: normalizeSignalText(apiResult.rawContent || apiResult.result),
@@ -1189,6 +1261,8 @@ async function main() {
         ]);
         resultsByKey[invoiceKey] = result;
       } catch (error) {
+        const errorDetail = describeError(error);
+        console.error(`[invoice ${invoiceKey}] ${errorDetail}`);
         const screenshotPath = path.join(args.artifactsDir, `${slugify(invoiceKey)}-script-error.png`);
         try {
           await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -1209,7 +1283,7 @@ async function main() {
           verification_amount_type: null,
           verification_amount_used: null,
           result_screenshot: fs.existsSync(screenshotPath) ? screenshotPath : null,
-          result_text: null,
+          result_text: `error_detail: ${errorDetail}`.slice(0, 4000),
         };
       } finally {
         await page.close();
@@ -1217,7 +1291,7 @@ async function main() {
     }
   } finally {
     if (shouldCloseBrowser && context) {
-      await context.browser().close();
+      await context.close();
     }
   }
 
@@ -1230,7 +1304,11 @@ async function main() {
   console.log(`Wrote verification results to ${args.outputJson}`);
 }
 
-main().catch((error) => {
-  console.error(`[verify_invoices] ${error.stack || error.message || error}`);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error(`[verify_invoices] ${error.stack || error.message || error}`);
+    process.exit(1);
+  });

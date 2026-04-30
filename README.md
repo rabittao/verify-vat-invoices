@@ -8,11 +8,13 @@
 
 - 扫描目录中的 `.pdf` 文件，支持递归查找
 - 使用 `PyMuPDF` 将 PDF 页面渲染为 PNG
-- 使用 `qwen-vl-max` 抽取增值税发票字段
+- 使用 `qwen3.5-plus` 抽取增值税发票字段
 - 自动规范化发票号码、日期、金额、校验码等字段
 - 通过 `Playwright` 驱动浏览器访问税务查验网站
 - 使用视觉模型识别验证码
 - 输出中间结果、查验结果和过程截图，便于复核
+- 提供 `FastAPI + SQLite` 服务层，支持登录、上传任务、台账查询、导出和系统配置
+- 提供 `Flutter` 移动端工程骨架，覆盖任务、台账、设置三条主流程
 
 ## 处理流程
 
@@ -35,7 +37,7 @@ PDF 目录
 
 1. 扫描输入目录中的 PDF
 2. 用 `PyMuPDF` 逐页渲染成 PNG
-3. 将页面图片发送给 `qwen-vl-max`
+3. 将页面图片发送给 `QWEN_INVOICE_MODEL` 指定的视觉模型
 4. 规范化字段格式
 5. 进行基础校验
 6. 输出 `extracted.json`
@@ -62,13 +64,21 @@ PDF 目录
 ├── SKILL.md
 ├── package.json
 ├── requirements.txt
+├── app
+│   ├── main.py
+│   ├── models.py
+│   ├── services.py
+│   └── worker.py
+├── mobile_app
+│   ├── pubspec.yaml
+│   └── lib
 ├── scripts
 │   ├── extract_invoices.py
 │   ├── run_pipeline.py
 │   ├── verify_invoices.js
 │   └── verify_invoices_helpers.js
+├── tests
 └── output
-    └── artifacts
 ```
 
 ## 环境要求
@@ -109,17 +119,43 @@ cp .env.example .env
 | 变量名 | 必填 | 作用 |
 |---|---|---|
 | `QWEN_API_KEY` | 是 | 抽取发票字段，供 `extract_invoices.py` 调用 DashScope Compatible API |
+| `QWEN_INVOICE_MODEL` | 否 | 发票抽取模型，默认 `qwen3.5-plus` |
 | `OPENROUTER_API_KEY` | 是 | 识别验证码，供 `verify_invoices.js` 调用 OpenRouter |
 | `OPENROUTER_CAPTCHA_MODEL` | 否 | 验证码 OCR 模型，默认 `google/gemini-3-flash-preview` |
 | `CHROME_USER_DATA_DIR` | 否 | 指向本地 Chrome 用户目录，便于复用浏览器证书/信任配置 |
+| `API_SECRET_KEY` | 强烈建议 | FastAPI 本地后端签发 bearer token 的签名密钥；未配置时仅会生成当前进程有效的临时随机值 |
+| `APP_ADMIN_USERNAME` | 否 | 启动时自动初始化的本地管理员用户名，默认 `admin` |
+| `APP_ADMIN_PASSWORD` | 强烈建议 | 启动时自动初始化的本地管理员密码；未配置时仅首次启动会生成临时随机密码并写入日志 |
 
 说明：
 
 - 如果没有 `QWEN_API_KEY`，抽取阶段会直接失败
 - 如果没有 `OPENROUTER_API_KEY`，查验阶段中的验证码识别会失败
 - 如果税务网站对浏览器信任链要求更严格，推荐配置 `CHROME_USER_DATA_DIR`
+- 发布或多人共用环境下，请显式设置 `API_SECRET_KEY` 和 `APP_ADMIN_PASSWORD`，不要依赖临时随机值
 
 ## 快速开始
+
+### 启动本地后端 API
+
+```bash
+uvicorn app.main:app --reload
+```
+
+后端会同时输出两类日志，便于调试上传、抽取、税站核验和入库结果：
+
+- 控制台日志：直接显示在 `uvicorn` 运行窗口。
+- 文件日志：`app_data/logs/app.log`。
+- 单任务脚本日志：`app_data/jobs/<job_id>/pipeline.log`，包含 `extract_invoices.py` 和 `verify_invoices.js` 的 `stdout/stderr`。
+
+实时查看文件日志：
+
+```bash
+tail -f app_data/logs/app.log
+```
+
+默认会在本地初始化一个管理员账户，用户名默认是 `admin`。
+请在 `.env` 中显式配置 `APP_ADMIN_PASSWORD`；如果未配置，首次启动只会生成一次临时随机密码并写入后端日志。
 
 ### 一键运行完整流程
 
@@ -170,6 +206,55 @@ output/
     │   └── *.png
     └── playwright/
         └── *.png
+
+## API 概览
+
+后端主要提供以下接口：
+
+- `POST /api/auth/login`
+- `GET /api/tasks`
+- `POST /api/tasks`
+- `GET /api/tasks/{job_id}`
+- `GET /api/tasks/{job_id}/items/{job_item_id}`
+- `POST /api/tasks/{job_id}/files/{file_id}/retry`
+- `GET /api/invoices`
+- `GET /api/invoices/{invoice_id}`
+- `POST /api/exports`
+- `GET /api/exports`
+- `GET /api/admin/system-config`
+- `PUT /api/admin/system-config`
+- `POST /api/admin/system-config/validate`
+
+## 测试
+
+当前仓库最小后端回归测试入口：
+
+```bash
+pytest -q
+```
+
+已覆盖：
+
+- 配置优先级
+- 任务上传与 worker 入库
+- 成功入台账、失败留任务明细
+- 台账分页
+- 导出任务链路
+
+## Flutter 说明
+
+移动端工程位于 `mobile_app/`，已搭好 `Flutter + Riverpod + go_router + dio + file_picker` 骨架，包含：
+
+- 登录页
+- 任务页
+- 批量确认页
+- 任务详情页
+- 台账页
+- 台账详情页
+- 导出记录页
+- 设置页 / 系统配置页
+
+当前机器未安装 Flutter SDK，因此本轮未能本机执行 `flutter pub get`、`flutter test` 或真机调试；后续在具备 Flutter 环境的机器上可直接继续接入 API 和状态逻辑。
 ```
 
 ### `extracted.json`
