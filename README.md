@@ -224,6 +224,31 @@ output/
 - `GET /api/admin/system-config`
 - `PUT /api/admin/system-config`
 - `POST /api/admin/system-config/validate`
+- `GET /api/health`
+
+## iPhone 真机与云端部署
+
+iPhone 真机不能访问前端默认的 `127.0.0.1:8000`。如果后端部署在云服务器，前端需要在运行或打包时传入云端 HTTPS API 地址：
+
+```bash
+cd mobile_app
+flutter run -d <你的iPhone设备ID> \
+  --dart-define=API_BASE_URL=https://api.your-domain.com
+```
+
+云端后端推荐使用 `Nginx + HTTPS + systemd + Uvicorn` 部署，并先通过健康检查确认服务可用：
+
+```bash
+curl https://api.your-domain.com/api/health
+```
+
+完整操作手册见：
+
+- `docs/iphone-cloud-deployment.md`
+- `docs/docker-deployment.md`
+- `docs/deploy/verify-vat-invoices.service.example`
+- `docs/deploy/nginx.verify-vat-invoices.conf.example`
+- `docs/deploy/nginx.docker.verify-vat-invoices.conf.example`
 
 ## 测试
 

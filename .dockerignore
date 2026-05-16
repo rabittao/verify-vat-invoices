@@ -1,0 +1,17 @@
+.git
+.pytest_cache
+.DS_Store
+__pycache__/
+*.pyc
+
+.env
+app_data/
+output/
+tmp/
+
+node_modules/
+mobile_app/.dart_tool/
+mobile_app/build/
+mobile_app/.idea/
+mobile_app/macos/Pods/
+mobile_app/ios/Pods/

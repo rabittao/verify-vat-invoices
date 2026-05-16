@@ -4,13 +4,26 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_state_models.dart';
+import '../../router.dart';
 
 final apiBaseUrlProvider = StateProvider<String>((ref) {
+  const configuredApiBaseUrl = String.fromEnvironment('API_BASE_URL');
+  if (configuredApiBaseUrl.trim().isNotEmpty) {
+    return _normalizeBaseUrl(configuredApiBaseUrl);
+  }
   if (Platform.isAndroid) {
     return 'http://10.0.2.2:8000';
   }
   return 'http://127.0.0.1:8000';
 });
+
+String _normalizeBaseUrl(String value) {
+  final trimmed = value.trim();
+  if (trimmed.endsWith('/')) {
+    return trimmed.substring(0, trimmed.length - 1);
+  }
+  return trimmed;
+}
 
 final authTokenProvider = StateProvider<String?>((ref) => null);
 
@@ -35,6 +48,16 @@ final apiClientProvider = Provider<ApiClient>((ref) {
       connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 60),
       headers: token == null ? null : {'Authorization': 'Bearer $token'},
+    ),
+  );
+  dio.interceptors.add(
+    InterceptorsWrapper(
+      onError: (error, handler) {
+        if (error.response?.statusCode == 401) {
+          ref.read(authControllerProvider.notifier).handleUnauthorized();
+        }
+        handler.next(error);
+      },
     ),
   );
   return ApiClient(dio);
@@ -62,8 +85,17 @@ class ApiClient {
     );
   }
 
-  Future<TaskListState> getTasks() async {
-    final response = await _dio.get('/api/tasks');
+  Future<TaskListState> getTasks({
+    int completedPage = 1,
+    int completedPageSize = 20,
+  }) async {
+    final response = await _dio.get(
+      '/api/tasks',
+      queryParameters: {
+        'completed_page': completedPage,
+        'completed_page_size': completedPageSize,
+      },
+    );
     final data = response.data as Map<String, dynamic>;
     return TaskListState(
       isLoading: false,
@@ -97,6 +129,16 @@ class ApiClient {
   Future<TaskDetailModel> getTaskDetail(String jobId) async {
     final response = await _dio.get('/api/tasks/$jobId');
     return TaskDetailModel.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  Future<TaskItemDetailModel> getTaskItemDetail(
+    String jobId,
+    int jobItemId,
+  ) async {
+    final response = await _dio.get('/api/tasks/$jobId/items/$jobItemId');
+    return TaskItemDetailModel.fromJson(
+      response.data as Map<String, dynamic>,
+    );
   }
 
   Future<String> retryTaskFile(String jobId, String fileId) async {
@@ -136,6 +178,49 @@ class ApiClient {
         .map((entry) =>
             ExportRecordModel.fromJson(entry as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<String> createExport({
+    required String exportType,
+    String? invoiceNumber,
+    int? invoiceId,
+  }) async {
+    final response = await _dio.post('/api/exports', data: {
+      'export_type': exportType,
+      if (invoiceId != null) 'invoice_id': invoiceId,
+      if (invoiceNumber != null && invoiceNumber.trim().isNotEmpty)
+        'filters': {
+          'invoice_number': invoiceNumber.trim(),
+        },
+    });
+    return (response.data as Map<String, dynamic>)['export_id'] as String;
+  }
+
+  Future<String> downloadProtectedFile({
+    required String fileUrl,
+    required String fallbackFileName,
+  }) async {
+    final resolvedUrl =
+        Uri.parse(_dio.options.baseUrl).resolve(fileUrl).toString();
+    final response = await _dio.get<List<int>>(
+      resolvedUrl,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final bytes = response.data;
+    if (bytes == null) {
+      throw Exception('文件内容为空');
+    }
+    final safeName =
+        fallbackFileName.replaceAll(RegExp(r'[\\\\/:*?"<>|]'), '_').trim();
+    final cacheDir =
+        Directory('${Directory.systemTemp.path}/verify_vat_invoice_exports');
+    if (!cacheDir.existsSync()) {
+      cacheDir.createSync(recursive: true);
+    }
+    final file =
+        File('${cacheDir.path}/${safeName.isEmpty ? 'export.bin' : safeName}');
+    await file.writeAsBytes(bytes, flush: true);
+    return file.path;
   }
 
   Future<SystemConfigModel> getSystemConfig() async {

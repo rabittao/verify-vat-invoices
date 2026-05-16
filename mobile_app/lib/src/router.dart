@@ -105,6 +105,13 @@ class AuthController extends StateNotifier<AuthState> {
     _ref.read(authTokenProvider.notifier).state = null;
     state = const AuthState.initial().copyWith(isLoading: false);
   }
+
+  Future<void> handleUnauthorized() async {
+    if (!state.isAuthenticated && state.accessToken == null) {
+      return;
+    }
+    await logout();
+  }
 }
 
 final authControllerProvider =

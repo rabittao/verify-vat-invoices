@@ -1,0 +1,22 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: verify-vat-invoices-api:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_DATA_DIR: /app/app_data
+      APP_DATABASE_URL: sqlite:////app/app_data/app.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app_data:/app/app_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

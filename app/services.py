@@ -9,7 +9,7 @@ import subprocess
 import sys
 import uuid
 from inspect import signature
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -955,6 +955,24 @@ def get_job_item_detail(session: Session, job_uuid: str, job_item_id: int) -> di
     }
 
 
+def _resolve_quick_range(
+    quick_range: str | None,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+) -> tuple[date | None, date | None]:
+    if date_from or date_to or not quick_range:
+        return date_from, date_to
+    today = datetime.now(timezone.utc).date()
+    if quick_range == "recent_7_days":
+        return today - timedelta(days=6), today
+    if quick_range == "recent_30_days":
+        return today - timedelta(days=29), today
+    if quick_range == "current_month":
+        return today.replace(day=1), today
+    return date_from, date_to
+
+
 def apply_ledger_filters(query, *, invoice_number: str | None, date_from: date | None, date_to: date | None, seller_name: str | None, buyer_name: str | None):
     if invoice_number:
         query = query.where(Invoice.invoice_number.contains(invoice_number))
@@ -983,6 +1001,11 @@ def list_invoices(
     sort_by: str,
     sort_order: str,
 ) -> dict[str, Any]:
+    date_from, date_to = _resolve_quick_range(
+        quick_range,
+        date_from=date_from,
+        date_to=date_to,
+    )
     base_query = select(Invoice)
     base_query = apply_ledger_filters(
         base_query,
@@ -1261,6 +1284,7 @@ def list_exports(session: Session, page: int, page_size: int) -> dict[str, Any]:
                 "finished_at": row.finished_at,
                 "file_name": row.file_name,
                 "file_size": row.file_size,
+                "error_message": row.error_message,
                 "open_url": f"/api/files/exports/{row.export_uuid}/open" if row.file_path else None,
                 "download_url": f"/api/files/exports/{row.export_uuid}/download" if row.file_path else None,
                 "share_enabled": bool(row.file_path),

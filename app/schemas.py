@@ -14,6 +14,12 @@ class Pagination(BaseModel):
     has_prev: bool
 
 
+class HealthResponse(BaseModel):
+    status: str
+    database: str
+    worker: str
+
+
 class SourceJobRef(BaseModel):
     job_id: str
     label: str
@@ -293,6 +299,7 @@ class ExportRecordResponse(BaseModel):
     finished_at: datetime | None
     file_name: str | None
     file_size: int | None
+    error_message: str | None
     open_url: str | None
     download_url: str | None
     share_enabled: bool

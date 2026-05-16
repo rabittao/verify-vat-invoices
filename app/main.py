@@ -20,6 +20,7 @@ from app.schemas import (
     CreateExportResponse,
     CreateTaskResponse,
     ExportListResponse,
+    HealthResponse,
     LedgerDetailResponse,
     LedgerListResponse,
     LoginRequest,
@@ -109,6 +110,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         if user.role != "admin":
             raise HTTPException(status_code=403, detail="admin required")
         return user
+
+    @app.get("/api/health", response_model=HealthResponse)
+    def health(db: Session = Depends(get_db)) -> HealthResponse:
+        db.execute(select(1))
+        return HealthResponse(status="ok", database="ok", worker="running")
 
     @app.post("/api/auth/login", response_model=LoginResponse)
     def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
