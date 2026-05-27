@@ -8,7 +8,7 @@
 
 - 扫描目录中的 `.pdf` 文件，支持递归查找
 - 使用 `PyMuPDF` 将 PDF 页面渲染为 PNG
-- 使用 `qwen3.5-plus` 抽取增值税发票字段
+- 使用 `qwen3.6-plus` 抽取增值税发票字段
 - 自动规范化发票号码、日期、金额、校验码等字段
 - 通过 `Playwright` 驱动浏览器访问税务查验网站
 - 使用视觉模型识别验证码
@@ -119,7 +119,7 @@ cp .env.example .env
 | 变量名 | 必填 | 作用 |
 |---|---|---|
 | `QWEN_API_KEY` | 是 | 抽取发票字段，供 `extract_invoices.py` 调用 DashScope Compatible API |
-| `QWEN_INVOICE_MODEL` | 否 | 发票抽取模型，默认 `qwen3.5-plus` |
+| `QWEN_INVOICE_MODEL` | 否 | 发票抽取模型，默认 `qwen3.6-plus` |
 | `OPENROUTER_API_KEY` | 是 | 识别验证码，供 `verify_invoices.js` 调用 OpenRouter |
 | `OPENROUTER_CAPTCHA_MODEL` | 否 | 验证码 OCR 模型，默认 `google/gemini-3-flash-preview` |
 | `CHROME_USER_DATA_DIR` | 否 | 指向本地 Chrome 用户目录，便于复用浏览器证书/信任配置 |

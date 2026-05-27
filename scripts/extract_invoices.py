@@ -141,7 +141,7 @@ def get_qwen_vl_key() -> str | None:
 
 def get_qwen_invoice_model() -> str:
     model = os.environ.get("QWEN_INVOICE_MODEL", "").strip()
-    return model or "qwen3.5-plus"
+    return model or "qwen3.6-plus"
 
 
 def resolve_render_support(preferred_backend: str) -> RenderSupport:

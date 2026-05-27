@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_state_models.dart';
@@ -14,8 +16,13 @@ final apiBaseUrlProvider = StateProvider<String>((ref) {
   if (Platform.isAndroid) {
     return 'http://10.0.2.2:8000';
   }
+  if (Platform.isIOS) {
+    return 'https://api.carfilmmo.com';
+  }
   return 'http://127.0.0.1:8000';
 });
+
+const _allowInsecureApiCert = bool.fromEnvironment('ALLOW_INSECURE_API_CERT');
 
 String _normalizeBaseUrl(String value) {
   final trimmed = value.trim();
@@ -29,7 +36,7 @@ final authTokenProvider = StateProvider<String?>((ref) => null);
 
 final rawApiClientProvider = Provider<ApiClient>((ref) {
   final baseUrl = ref.watch(apiBaseUrlProvider);
-  final dio = Dio(
+  final dio = _buildDio(
     BaseOptions(
       baseUrl: baseUrl,
       connectTimeout: const Duration(seconds: 15),
@@ -42,7 +49,7 @@ final rawApiClientProvider = Provider<ApiClient>((ref) {
 final apiClientProvider = Provider<ApiClient>((ref) {
   final baseUrl = ref.watch(apiBaseUrlProvider);
   final token = ref.watch(authTokenProvider);
-  final dio = Dio(
+  final dio = _buildDio(
     BaseOptions(
       baseUrl: baseUrl,
       connectTimeout: const Duration(seconds: 15),
@@ -62,6 +69,31 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   );
   return ApiClient(dio);
 });
+
+Dio _buildDio(BaseOptions options) {
+  final dio = Dio(options);
+  _configureDebugCertificateBypass(dio, options.baseUrl);
+  return dio;
+}
+
+void _configureDebugCertificateBypass(Dio dio, String baseUrl) {
+  if (!kDebugMode || !_allowInsecureApiCert) {
+    return;
+  }
+  final uri = Uri.tryParse(baseUrl);
+  if (uri == null || uri.scheme != 'https' || uri.host != '124.221.241.208') {
+    return;
+  }
+  dio.httpClientAdapter = IOHttpClientAdapter(
+    createHttpClient: () {
+      final client = HttpClient();
+      client.badCertificateCallback = (_, host, __) {
+        return host == '124.221.241.208';
+      };
+      return client;
+    },
+  );
+}
 
 class ApiClient {
   ApiClient(this._dio);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/network/api_client.dart';
 import '../../router.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -26,6 +27,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
+    final apiBaseUrl = ref.watch(apiBaseUrlProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isBusy = _submitting || authState.isLoading;
@@ -159,8 +161,8 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                             authState.errorMessage!,
                                             style: theme.textTheme.bodySmall
                                                 ?.copyWith(
-                                              color: colorScheme
-                                                  .onErrorContainer,
+                                              color:
+                                                  colorScheme.onErrorContainer,
                                             ),
                                           ),
                                         ),
@@ -218,6 +220,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                       ),
                                     ),
                                   ],
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'API：$apiBaseUrl',
+                                  textAlign: TextAlign.center,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
                                 ),
                               ],
                             ),

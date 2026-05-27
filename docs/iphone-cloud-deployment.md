@@ -77,7 +77,7 @@ cp .env.example .env
 
 ```bash
 QWEN_API_KEY=你的千问key
-QWEN_INVOICE_MODEL=qwen3.5-plus
+QWEN_INVOICE_MODEL=qwen3.6-plus
 OPENROUTER_API_KEY=你的openrouter_key
 OPENROUTER_CAPTCHA_MODEL=google/gemini-3-flash-preview
 API_SECRET_KEY=一段长随机密钥

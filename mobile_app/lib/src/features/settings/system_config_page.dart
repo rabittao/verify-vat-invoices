@@ -194,7 +194,7 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
                     _ConfigTextField(
                       controller: _invoiceModelController,
                       labelText: 'QWEN_INVOICE_MODEL',
-                      helperText: '例如 qwen3.5-plus',
+                      helperText: '例如 qwen3.6-plus',
                     ),
                   ],
                 ),

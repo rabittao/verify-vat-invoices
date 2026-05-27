@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 OPENROUTER_CAPTCHA_MODEL_DEFAULT = "google/gemini-3-flash-preview"
-QWEN_INVOICE_MODEL_DEFAULT = "qwen3.5-plus"
+QWEN_INVOICE_MODEL_DEFAULT = "qwen3.6-plus"
 SYSTEM_SETTING_KEYS = {
     "QWEN_API_KEY": True,
     "QWEN_INVOICE_MODEL": False,

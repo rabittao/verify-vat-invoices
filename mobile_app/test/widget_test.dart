@@ -129,7 +129,7 @@ void main() {
           : configuredApiBaseUrl.trim();
       expect(baseUrl, expected);
     } else {
-      expect(baseUrl, startsWith('http://'));
+      expect(baseUrl, startsWith('http'));
     }
   });
 
