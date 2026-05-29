@@ -88,9 +88,12 @@ def mask_secret(value: str | None) -> str | None:
 
 
 def parse_datetime(value: str | None) -> datetime | None:
-    if not value:
+    if not value or not value.strip():
         return None
-    return datetime.fromisoformat(value)
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    return datetime.fromisoformat(normalized)
 
 
 def humanize_status(extraction_status: str | None, verification_status: str | None, verification_message: str | None) -> tuple[str, str | None]:
@@ -503,9 +506,7 @@ def determine_job_status(success_count: int, failed_count: int, skipped_count: i
 
 
 def parse_verified_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
+    return parse_datetime(value)
 
 
 def upsert_invoice(session: Session, job: VerificationJob, item: VerificationJobItem) -> None:

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.database import Base
 from app.models import Export, Invoice, User, VerificationJob, VerificationJobItem
 from app.security import hash_password
-from app.services import list_exports, list_invoices
+from app.services import list_exports, list_invoices, parse_verified_timestamp
 
 
 def build_session() -> Session:
@@ -154,3 +154,9 @@ def test_list_exports_includes_error_message() -> None:
 
     assert len(result["items"]) == 1
     assert result["items"][0]["error_message"] == "生成文件失败"
+
+
+def test_parse_verified_timestamp_accepts_utc_z_suffix() -> None:
+    parsed = parse_verified_timestamp("2026-05-29T03:31:42.056Z")
+
+    assert parsed == datetime(2026, 5, 29, 3, 31, 42, 56000, tzinfo=timezone.utc)
