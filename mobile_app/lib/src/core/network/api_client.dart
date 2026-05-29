@@ -8,18 +8,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/app_state_models.dart';
 import '../../router.dart';
 
+const defaultApiBaseUrl = 'http://124.221.241.208';
+
 final apiBaseUrlProvider = StateProvider<String>((ref) {
   const configuredApiBaseUrl = String.fromEnvironment('API_BASE_URL');
   if (configuredApiBaseUrl.trim().isNotEmpty) {
     return _normalizeBaseUrl(configuredApiBaseUrl);
   }
-  if (Platform.isAndroid) {
-    return 'http://10.0.2.2:8000';
-  }
-  if (Platform.isIOS) {
-    return 'https://api.carfilmmo.com';
-  }
-  return 'http://127.0.0.1:8000';
+  return defaultApiBaseUrl;
 });
 
 const _allowInsecureApiCert = bool.fromEnvironment('ALLOW_INSECURE_API_CERT');

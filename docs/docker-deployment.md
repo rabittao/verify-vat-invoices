@@ -11,8 +11,8 @@
 
 ```text
 iPhone App
-  -> https://api.your-domain.com
-     -> Nginx / HTTPS
+  -> http://124.221.241.208
+     -> Nginx / HTTP
         -> Docker container: FastAPI / Uvicorn
            -> SQLite: ./app_data/app.db
            -> uploads/jobs/exports/logs: ./app_data/
@@ -23,7 +23,7 @@ iPhone App
 
 - API Key 不写进镜像，只放在服务器 `.env`。
 - SQLite 和任务文件挂载到宿主机 `./app_data`，容器重建不丢数据。
-- iPhone 真机必须访问 HTTPS API，不使用 `127.0.0.1`。
+- iPhone 真机必须访问公网 API，不使用 `127.0.0.1`。当前域名不可用时先使用 `http://124.221.241.208`。
 
 ## 2. 服务器准备
 
@@ -155,7 +155,7 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-申请 HTTPS 证书：
+域名恢复后可再申请 HTTPS 证书：
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
@@ -165,7 +165,7 @@ sudo certbot --nginx -d api.your-domain.com
 外网验证：
 
 ```bash
-curl https://api.your-domain.com/api/health
+curl http://124.221.241.208/api/health
 ```
 
 ## 6. iPhone 前端安装
@@ -180,7 +180,7 @@ flutter doctor
 flutter pub get
 flutter devices
 flutter run -d <你的iPhone设备ID> \
-  --dart-define=API_BASE_URL=https://api.your-domain.com
+  --dart-define=API_BASE_URL=http://124.221.241.208
 ```
 
 如果用 Xcode：
@@ -198,8 +198,9 @@ open ios/Runner.xcworkspace
 
 注意：
 
-- 不传 `API_BASE_URL` 时，iOS 默认会访问 `http://127.0.0.1:8000`，这在 iPhone 上是手机自己，不是服务器。
-- 真机建议只连接 HTTPS 地址，不建议为 iOS 放开 HTTP 明文访问。
+- 不传 `API_BASE_URL` 时，前端默认访问 `http://124.221.241.208`。
+- 临时连接本机后端时，可显式传入 `--dart-define=API_BASE_URL=http://127.0.0.1:8000`。
+- 当前域名不可用时，先用公网 IP 的 HTTP 入口调试；域名恢复后再切回 HTTPS。
 
 ## 7. 可选：Flutter Web 预览
 
@@ -207,7 +208,7 @@ open ios/Runner.xcworkspace
 
 ```bash
 cd mobile_app
-flutter build web --dart-define=API_BASE_URL=https://api.your-domain.com
+flutter build web --dart-define=API_BASE_URL=http://124.221.241.208
 ```
 
 生成目录：
@@ -258,8 +259,8 @@ tar -czf verify-vat-invoices-backup-$(date +%F).tar.gz app_data
 
 ## 9. 联调验收清单
 
-- `curl https://api.your-domain.com/api/health` 返回 `status=ok`。
-- iPhone App 使用 `--dart-define=API_BASE_URL=https://api.your-domain.com` 安装。
+- `curl http://124.221.241.208/api/health` 返回 `status=ok`。
+- iPhone App 默认使用 `http://124.221.241.208`，或显式传入 `--dart-define=API_BASE_URL=http://124.221.241.208` 安装。
 - 管理员账号能登录。
 - 任务页能加载，没有 `127.0.0.1` 连接错误。
 - 能上传 PDF，且任务进入处理中。

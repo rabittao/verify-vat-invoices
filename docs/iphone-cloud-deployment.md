@@ -1,6 +1,6 @@
 # iPhone 真机安装与云端后端部署
 
-本文档用于第一版外网真机验证：iPhone 通过 HTTPS 访问云服务器上的 FastAPI 后端。
+本文档用于第一版外网真机验证：iPhone 通过公网 IP 访问云服务器上的 FastAPI 后端。
 
 ## 1. 前端 iPhone 真机安装
 
@@ -21,13 +21,14 @@ flutter pub get
 
 ### 使用云端 API 地址运行到 iPhone
 
-把 `https://api.your-domain.com` 替换成你的后端 HTTPS 域名：
+当前默认后端地址是 `http://124.221.241.208`，可直接运行：
 
 ```bash
 flutter devices
-flutter run -d <你的iPhone设备ID> \
-  --dart-define=API_BASE_URL=https://api.your-domain.com
+flutter run -d <你的iPhone设备ID>
 ```
+
+如需临时切换到其他后端，再传入 `API_BASE_URL`。
 
 如果需要用 Xcode 调试：
 
@@ -41,7 +42,7 @@ open ios/Runner.xcworkspace
 - 在 `Signing & Capabilities` 里选择你的 Team
 - 连接 iPhone 后点击 Run
 
-> iPhone 真机不能使用 `127.0.0.1:8000` 访问电脑或服务器。真机环境必须使用 `--dart-define=API_BASE_URL=...` 指向云端 HTTPS 地址。
+> iPhone 真机不能使用 `127.0.0.1:8000` 访问电脑或服务器。当前域名不可用时，前端默认访问 `http://124.221.241.208`；如果要切换到其他云端地址，再使用 `--dart-define=API_BASE_URL=...` 覆盖。
 
 ## 2. 云服务器后端部署
 
@@ -153,15 +154,22 @@ sudo certbot --nginx -d api.your-domain.com
 1. 浏览器或终端访问：
 
    ```bash
-   curl https://api.your-domain.com/api/health
+   curl http://124.221.241.208/api/health
    ```
 
-2. iPhone 安装 App：
+2. iPhone 安装 App。默认连接 `http://124.221.241.208`：
+
+   ```bash
+   cd mobile_app
+   flutter run -d <你的iPhone设备ID>
+   ```
+
+   如需连接其他后端，显式覆盖：
 
    ```bash
    cd mobile_app
    flutter run -d <你的iPhone设备ID> \
-     --dart-define=API_BASE_URL=https://api.your-domain.com
+     --dart-define=API_BASE_URL=http://124.221.241.208
    ```
 
 3. 在 iPhone 上验证：

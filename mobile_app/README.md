@@ -4,24 +4,27 @@
 
 ## iPhone 真机运行
 
-真机连接云端后端时，默认访问 `https://api.carfilmmo.com`。如需切换到其他后端，可通过 `--dart-define=API_BASE_URL=...` 指定 HTTPS API 地址：
+默认访问云端后端 `http://124.221.241.208`。如需切换到其他后端，可通过 `--dart-define=API_BASE_URL=...` 指定 API 地址：
 
 ```bash
 flutter pub get
 flutter devices
 flutter run -d <你的iPhone设备ID> \
-  --dart-define=API_BASE_URL=https://api.your-domain.com
+  --dart-define=API_BASE_URL=http://124.221.241.208
 ```
 
-如果没有传入 `API_BASE_URL`：
+如果没有传入 `API_BASE_URL`，iOS、Android、macOS 和其他平台都会默认访问 `http://124.221.241.208`。
 
-- Android 模拟器默认访问 `http://10.0.2.2:8000`
-- iOS 默认访问 `https://api.carfilmmo.com`
-- macOS / 其他平台默认访问 `http://127.0.0.1:8000`
+iPhone 真机上的 `127.0.0.1` 是手机本机，不是电脑或云服务器，因此默认地址指向云端 IP 服务。
 
-iPhone 真机上的 `127.0.0.1` 是手机本机，不是电脑或云服务器，因此 iOS 默认指向云端 HTTPS 地址。
+如果需要临时连接本机后端，可显式覆盖：
 
-如果域名 HTTPS 临时被网络或备案链路拦截，但 `https://124.221.241.208/api/health` 可以访问，可用 IP 地址做 debug 调试：
+```bash
+flutter run -d macos \
+  --dart-define=API_BASE_URL=http://127.0.0.1:8000
+```
+
+如果需要临时验证 HTTPS IP，可用下面的 debug 参数绕过证书域名不匹配：
 
 ```bash
 flutter run -d <你的iPhone设备ID> \
@@ -31,12 +34,12 @@ flutter run -d <你的iPhone设备ID> \
 
 `ALLOW_INSECURE_API_CERT` 只用于 debug 临时排障，正式打包不要开启。
 
-如果需要完全绕过 HTTPS，先在服务器把 Nginx 的 `80` 端口改成反代后端，再用 HTTP 调试：
+如果服务器还没有开放 HTTP 反代，先在服务器把 Nginx 的 `80` 端口改成反代后端：
 
 ```nginx
 server {
     listen 80;
-    server_name api.carfilmmo.com 124.221.241.208;
+    server_name 124.221.241.208;
 
     client_max_body_size 60m;
 

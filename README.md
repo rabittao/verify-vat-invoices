@@ -226,18 +226,26 @@ output/
 
 ## iPhone 真机与云端部署
 
-iPhone 真机不能访问前端默认的 `127.0.0.1:8000`。如果后端部署在云服务器，前端需要在运行或打包时传入云端 HTTPS API 地址：
+前端默认访问云端后端 `http://124.221.241.208`。如果需要切换到其他服务器，运行或打包时传入 `API_BASE_URL`：
 
 ```bash
 cd mobile_app
 flutter run -d <你的iPhone设备ID> \
-  --dart-define=API_BASE_URL=https://api.your-domain.com
+  --dart-define=API_BASE_URL=http://124.221.241.208
 ```
 
-云端后端推荐使用 `Nginx + HTTPS + systemd + Uvicorn` 部署，并先通过健康检查确认服务可用：
+云端后端推荐使用 `Nginx + systemd + Uvicorn` 或 Docker 部署，并先通过健康检查确认服务可用：
 
 ```bash
-curl https://api.your-domain.com/api/health
+curl http://124.221.241.208/api/health
+```
+
+如果需要临时连接本机后端，可显式覆盖：
+
+```bash
+cd mobile_app
+flutter run -d macos \
+  --dart-define=API_BASE_URL=http://127.0.0.1:8000
 ```
 
 完整操作手册见：
