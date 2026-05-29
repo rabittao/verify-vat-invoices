@@ -49,17 +49,18 @@ class WorkerManager:
             self._thread.join(timeout=3)
             self._thread = None
 
-    def enqueue_job(self, job_uuid: str) -> None:
+    def enqueue_job(self, job_uuid: str) -> bool:
         if self.inline:
             process_job(job_uuid, self.session_factory, self.settings)
-            return
+            return True
         with self._lock:
             if job_uuid in self._queued_jobs:
-                logger.info("Job already queued; skip duplicate enqueue: %s", job_uuid)
-                return
+                logger.debug("Job already queued; skip duplicate enqueue: %s", job_uuid)
+                return False
             self._queued_jobs.add(job_uuid)
         self._queue.put(("job", job_uuid))
         logger.info("Job queued: %s", job_uuid)
+        return True
 
     def enqueue_export(self, export_uuid: str) -> None:
         if self.inline:
@@ -75,10 +76,9 @@ class WorkerManager:
                 .where(VerificationJob.status.in_(["queued", "running"]))
                 .order_by(VerificationJob.created_at.asc())
             ).all()
-        for job_uuid in job_ids:
-            self.enqueue_job(job_uuid)
-        if job_ids:
-            logger.info("Re-enqueued unfinished jobs: %s", ", ".join(job_ids))
+        enqueued_ids = [job_uuid for job_uuid in job_ids if self.enqueue_job(job_uuid)]
+        if enqueued_ids:
+            logger.info("Re-enqueued unfinished jobs: %s", ", ".join(enqueued_ids))
 
     def wake_unfinished_jobs(self) -> None:
         if self.inline:

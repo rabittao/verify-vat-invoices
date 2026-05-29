@@ -25,11 +25,9 @@ class SystemConfigPage extends ConsumerStatefulWidget {
 class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
   final _qwenController = TextEditingController();
   final _invoiceModelController = TextEditingController();
-  final _openrouterController = TextEditingController();
   final _modelController = TextEditingController();
 
   bool _showQwenSecret = false;
-  bool _showOpenRouterSecret = false;
   bool _isValidating = false;
   bool _isSaving = false;
 
@@ -37,7 +35,6 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
   void dispose() {
     _qwenController.dispose();
     _invoiceModelController.dispose();
-    _openrouterController.dispose();
     _modelController.dispose();
     super.dispose();
   }
@@ -78,15 +75,11 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
             qwenInvoiceModel: _invoiceModelController.text.trim().isEmpty
                 ? null
                 : _invoiceModelController.text.trim(),
-            openrouterApiKey: _openrouterController.text.trim().isEmpty
-                ? null
-                : _openrouterController.text.trim(),
             captchaModel: _modelController.text.trim().isEmpty
                 ? null
                 : _modelController.text.trim(),
           );
       _qwenController.clear();
-      _openrouterController.clear();
       ref.invalidate(systemConfigProvider);
       if (!mounted) {
         return;
@@ -162,14 +155,7 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
                   title: 'QWEN_API_KEY',
                   configured: value.qwenConfigured,
                   maskedValue: value.qwenMaskedValue,
-                  description: '用于发票字段抽取能力。',
-                ),
-                const SizedBox(height: 12),
-                _SecretStatusCard(
-                  title: 'OPENROUTER_API_KEY',
-                  configured: value.openrouterConfigured,
-                  maskedValue: value.openrouterMaskedValue,
-                  description: '用于验证码识别与相关模型调用。',
+                  description: '用于发票字段抽取和验证码识别。',
                 ),
                 const SizedBox(height: 20),
                 const _SectionHeader(
@@ -200,25 +186,13 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
                 ),
                 const SizedBox(height: 12),
                 _InputPanel(
-                  title: 'OPENROUTER 验证码模型',
-                  description: '更新 OpenRouter 密钥或切换当前验证码识别模型。',
+                  title: '验证码识别模型',
+                  description: '切换当前验证码识别模型，默认 qwen3.6-plus。',
                   children: [
-                    _SecretInputField(
-                      controller: _openrouterController,
-                      labelText: '新的 OPENROUTER_API_KEY',
-                      helperText: '留空则不更新',
-                      visible: _showOpenRouterSecret,
-                      onToggleVisibility: () {
-                        setState(
-                          () => _showOpenRouterSecret = !_showOpenRouterSecret,
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 14),
                     _ConfigTextField(
                       controller: _modelController,
-                      labelText: 'OPENROUTER_CAPTCHA_MODEL',
-                      helperText: '填写验证码模型标识',
+                      labelText: 'QWEN_CAPTCHA_MODEL',
+                      helperText: '例如 qwen3.6-plus',
                     ),
                   ],
                 ),

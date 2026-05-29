@@ -79,8 +79,7 @@ cp .env.example .env
 ```bash
 QWEN_API_KEY=你的千问key
 QWEN_INVOICE_MODEL=qwen3.6-plus
-OPENROUTER_API_KEY=你的openrouter_key
-OPENROUTER_CAPTCHA_MODEL=google/gemini-3-flash-preview
+QWEN_CAPTCHA_MODEL=qwen3.6-plus
 API_SECRET_KEY=一段长随机密钥
 APP_ADMIN_USERNAME=admin
 APP_ADMIN_PASSWORD=强密码
@@ -273,5 +272,5 @@ tar -czf verify-vat-invoices-backup-$(date +%F).tar.gz app_data
 
 - 云服务器运行 Playwright 访问税站可能受网络、风控或证书环境影响；如果核验不稳定，建议后续改为“API 上云 + 核验 worker 留在内网机器”的混合方案。
 - SQLite 适合第一版单人或小规模使用；多人并发上传时建议升级 PostgreSQL。
-- `.env` 不要提交 Git，尤其是 `QWEN_API_KEY`、`OPENROUTER_API_KEY`、`API_SECRET_KEY`、`APP_ADMIN_PASSWORD`。
+- `.env` 不要提交 Git，尤其是 `QWEN_API_KEY`、`API_SECRET_KEY`、`APP_ADMIN_PASSWORD`。
 - Nginx 必须配置 `client_max_body_size 60m`，否则批量上传可能被网关拒绝。

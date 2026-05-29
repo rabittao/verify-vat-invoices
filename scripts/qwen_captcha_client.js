@@ -1,9 +1,9 @@
-const OPENROUTER_CAPTCHA_MODEL = process.env.OPENROUTER_CAPTCHA_MODEL || "google/gemini-3-flash-preview";
+const QWEN_CAPTCHA_MODEL = process.env.QWEN_CAPTCHA_MODEL || "qwen3.6-plus";
 
-function buildOpenRouterCaptchaPayload({
+function buildQwenCaptchaPayload({
   prompt,
   base64Image,
-  model = OPENROUTER_CAPTCHA_MODEL,
+  model = QWEN_CAPTCHA_MODEL,
   maxTokens = 20,
 }) {
   return {
@@ -29,13 +29,13 @@ function buildOpenRouterCaptchaPayload({
   };
 }
 
-function extractOpenRouterOutputText(responseBody) {
+function extractQwenOutputText(responseBody) {
   const content = responseBody?.choices?.[0]?.message?.content;
   return typeof content === "string" ? content : "";
 }
 
 module.exports = {
-  OPENROUTER_CAPTCHA_MODEL,
-  buildOpenRouterCaptchaPayload,
-  extractOpenRouterOutputText,
+  QWEN_CAPTCHA_MODEL,
+  buildQwenCaptchaPayload,
+  extractQwenOutputText,
 };

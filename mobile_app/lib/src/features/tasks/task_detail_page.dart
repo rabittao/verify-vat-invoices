@@ -1018,13 +1018,6 @@ class _TaskItemEvidenceSheet extends ConsumerWidget {
                         foreground: _TaskWorkbenchPalette.dangerInk,
                       ),
                     ],
-                    if (item.resultText?.isNotEmpty == true) ...[
-                      const SizedBox(height: 12),
-                      _DetailTextCard(
-                        title: '原始结果',
-                        content: item.resultText!,
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -1561,7 +1554,6 @@ class _TaskItemEvidenceDetail {
     required this.humanSummary,
     required this.extractScreenshotUrl,
     required this.verifyScreenshotUrl,
-    required this.resultText,
     required this.validationErrors,
   });
 
@@ -1572,7 +1564,6 @@ class _TaskItemEvidenceDetail {
   final String? humanSummary;
   final String? extractScreenshotUrl;
   final String? verifyScreenshotUrl;
-  final String? resultText;
   final List<String> validationErrors;
 
   factory _TaskItemEvidenceDetail.fromJson(Map<String, dynamic> json) {
@@ -1593,7 +1584,6 @@ class _TaskItemEvidenceDetail {
       humanSummary: processingInfo['human_summary'] as String?,
       extractScreenshotUrl: evidence['extract_screenshot_url'] as String?,
       verifyScreenshotUrl: evidence['verify_screenshot_url'] as String?,
-      resultText: technical['result_text'] as String?,
       validationErrors:
           validationErrors.map((entry) => entry.toString()).toList(),
     );

@@ -810,38 +810,29 @@ class SystemConfigModel {
     required this.qwenConfigured,
     required this.qwenMaskedValue,
     required this.invoiceModel,
-    required this.openrouterConfigured,
-    required this.openrouterMaskedValue,
     required this.captchaModel,
   });
 
   final bool qwenConfigured;
   final String? qwenMaskedValue;
   final String invoiceModel;
-  final bool openrouterConfigured;
-  final String? openrouterMaskedValue;
   final String captchaModel;
 
   factory SystemConfigModel.fromJson(Map<String, dynamic> json) {
     final qwen = json['qwen_api_key'] as Map<String, dynamic>? ?? const {};
-    final openrouter =
-        json['openrouter_api_key'] as Map<String, dynamic>? ?? const {};
     return SystemConfigModel(
       qwenConfigured: qwen['is_configured'] as bool? ?? false,
       qwenMaskedValue: qwen['masked_value'] as String?,
       invoiceModel: json['qwen_invoice_model'] as String? ?? '',
-      openrouterConfigured: openrouter['is_configured'] as bool? ?? false,
-      openrouterMaskedValue: openrouter['masked_value'] as String?,
-      captchaModel: json['openrouter_captcha_model'] as String? ?? '',
+      captchaModel: json['qwen_captcha_model'] as String? ?? '',
     );
   }
 }
 
 extension SystemConfigPresentation on SystemConfigModel {
-  int get configuredSecretCount =>
-      (qwenConfigured ? 1 : 0) + (openrouterConfigured ? 1 : 0);
+  int get configuredSecretCount => qwenConfigured ? 1 : 0;
 
-  int get totalSecretCount => 2;
+  int get totalSecretCount => 1;
 
   String get invoiceModelDisplay =>
       invoiceModel.trim().isNotEmpty ? invoiceModel.trim() : '未设置发票抽取模型';

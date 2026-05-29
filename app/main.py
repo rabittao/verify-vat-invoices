@@ -307,8 +307,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         mapping = {
             "qwen_api_key": "QWEN_API_KEY",
             "qwen_invoice_model": "QWEN_INVOICE_MODEL",
-            "openrouter_api_key": "OPENROUTER_API_KEY",
-            "openrouter_captcha_model": "OPENROUTER_CAPTCHA_MODEL",
+            "qwen_captcha_model": "QWEN_CAPTCHA_MODEL",
         }
         for field_name, key in mapping.items():
             if field_name in payload.model_fields_set:

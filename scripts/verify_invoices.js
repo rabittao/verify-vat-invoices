@@ -5,10 +5,10 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const {
-  OPENROUTER_CAPTCHA_MODEL,
-  buildOpenRouterCaptchaPayload,
-  extractOpenRouterOutputText,
-} = require("./openrouter_captcha_client");
+  QWEN_CAPTCHA_MODEL,
+  buildQwenCaptchaPayload,
+  extractQwenOutputText,
+} = require("./qwen_captcha_client");
 const {
   buildVerificationSignalSummary,
   classifyVerificationSignals,
@@ -265,10 +265,10 @@ async function findSubmitButton(page) {
 
 // ============================================================================
 // Vision Model OCR for Captcha
-// Model: Gemini 3 Flash Preview (via OpenRouter)
+// Default model: qwen3.6-plus (via DashScope compatible API)
 // ============================================================================
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const QWEN_API_KEY = process.env.QWEN_API_KEY;
 
 function buildCaptchaPrompt(promptText) {
   const hintText = String(promptText || "")
@@ -316,50 +316,48 @@ function parseCaptchaResponse(text) {
   return filtered || withoutThinking;
 }
 
-async function callOpenRouterVision(imageBuffer, prompt, options = {}) {
-  if (!OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY not configured");
+async function callQwenVision(imageBuffer, prompt, options = {}) {
+  if (!QWEN_API_KEY) {
+    throw new Error("QWEN_API_KEY not configured");
   }
 
   const base64Image = imageBuffer.toString("base64");
-  const payload = buildOpenRouterCaptchaPayload({
+  const payload = buildQwenCaptchaPayload({
     prompt,
     base64Image,
-    model: OPENROUTER_CAPTCHA_MODEL,
+    model: QWEN_CAPTCHA_MODEL,
     maxTokens: options.maxTokens || 20,
   });
 
   let response;
   try {
-    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    response = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://github.com/verify-vat-invoices",
-        "X-Title": "verify-vat-invoices",
+        Authorization: `Bearer ${QWEN_API_KEY}`,
       },
       body: JSON.stringify(payload),
     });
   } catch (error) {
-    throw buildContextualError("OpenRouter fetch failed", error, {
-      model: OPENROUTER_CAPTCHA_MODEL,
+    throw buildContextualError("Qwen captcha fetch failed", error, {
+      model: QWEN_CAPTCHA_MODEL,
       max_tokens: options.maxTokens || 20,
     });
   }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
+    throw new Error(`Qwen captcha API error: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
-  const content = extractOpenRouterOutputText(data);
+  const content = extractQwenOutputText(data);
   const parsed = parseCaptchaResponse(content);
   return {
     result: parsed,
     rawContent: content,
-    model: OPENROUTER_CAPTCHA_MODEL,
+    model: QWEN_CAPTCHA_MODEL,
   };
 }
 
@@ -367,18 +365,18 @@ async function captureCaptchaWithVisionModel(imageBuffer, promptText) {
   const prompt = buildCaptchaPrompt(promptText);
   let apiResult;
   try {
-    apiResult = await callOpenRouterVision(imageBuffer, prompt);
+    apiResult = await callQwenVision(imageBuffer, prompt);
   } catch (error) {
     throw buildContextualError("Captcha OCR request failed", error, {
-      model: OPENROUTER_CAPTCHA_MODEL,
+      model: QWEN_CAPTCHA_MODEL,
     });
   }
   return {
     primaryCaptcha: apiResult.result,
     alternativeCaptchas: [],
-    confidenceNote: `${OPENROUTER_CAPTCHA_MODEL}: single call`,
+    confidenceNote: `${QWEN_CAPTCHA_MODEL}: single call`,
     confidenceScore: 1.0,
-    modelUsed: OPENROUTER_CAPTCHA_MODEL,
+    modelUsed: QWEN_CAPTCHA_MODEL,
   };
 }
 
@@ -403,14 +401,14 @@ async function classifyVerificationScreenshot(screenshotPath) {
   const screenshotBuffer = fs.readFileSync(screenshotPath);
   let apiResult;
   try {
-    apiResult = await callOpenRouterVision(
+    apiResult = await callQwenVision(
       screenshotBuffer,
       buildVerificationScreenshotPrompt(),
       { maxTokens: 120 }
     );
   } catch (error) {
     throw buildContextualError("Verification screenshot classification failed", error, {
-      model: OPENROUTER_CAPTCHA_MODEL,
+      model: QWEN_CAPTCHA_MODEL,
       screenshot: path.basename(screenshotPath),
     });
   }

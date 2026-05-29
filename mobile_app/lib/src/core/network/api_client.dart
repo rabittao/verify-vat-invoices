@@ -263,14 +263,12 @@ class ApiClient {
   Future<void> updateSystemConfig({
     String? qwenApiKey,
     String? qwenInvoiceModel,
-    String? openrouterApiKey,
     String? captchaModel,
   }) async {
     await _dio.put('/api/admin/system-config', data: {
       if (qwenApiKey != null) 'qwen_api_key': qwenApiKey,
       if (qwenInvoiceModel != null) 'qwen_invoice_model': qwenInvoiceModel,
-      if (openrouterApiKey != null) 'openrouter_api_key': openrouterApiKey,
-      if (captchaModel != null) 'openrouter_captcha_model': captchaModel,
+      if (captchaModel != null) 'qwen_captcha_model': captchaModel,
     });
   }
 

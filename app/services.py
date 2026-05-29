@@ -31,13 +31,12 @@ from app.security import hash_password, verify_password
 logger = logging.getLogger(__name__)
 
 
-OPENROUTER_CAPTCHA_MODEL_DEFAULT = "google/gemini-3-flash-preview"
+QWEN_CAPTCHA_MODEL_DEFAULT = "qwen3.6-plus"
 QWEN_INVOICE_MODEL_DEFAULT = "qwen3.6-plus"
 SYSTEM_SETTING_KEYS = {
     "QWEN_API_KEY": True,
     "QWEN_INVOICE_MODEL": False,
-    "OPENROUTER_API_KEY": True,
-    "OPENROUTER_CAPTCHA_MODEL": False,
+    "QWEN_CAPTCHA_MODEL": False,
 }
 LEDGER_AVAILABLE_COLUMNS = [
     "invoice_number",
@@ -257,7 +256,7 @@ def build_pipeline_env(session: Session, settings: AppSettings) -> dict[str, str
         env.setdefault(key, value)
     for key, value in get_setting_map(session).items():
         env[key] = value
-    env.setdefault("OPENROUTER_CAPTCHA_MODEL", OPENROUTER_CAPTCHA_MODEL_DEFAULT)
+    env.setdefault("QWEN_CAPTCHA_MODEL", QWEN_CAPTCHA_MODEL_DEFAULT)
     return env
 
 
@@ -269,11 +268,7 @@ def get_system_config(session: Session, settings: AppSettings) -> dict[str, Any]
             "masked_value": mask_secret(env.get("QWEN_API_KEY")),
         },
         "qwen_invoice_model": env.get("QWEN_INVOICE_MODEL", QWEN_INVOICE_MODEL_DEFAULT),
-        "openrouter_api_key": {
-            "is_configured": bool(env.get("OPENROUTER_API_KEY")),
-            "masked_value": mask_secret(env.get("OPENROUTER_API_KEY")),
-        },
-        "openrouter_captcha_model": env.get("OPENROUTER_CAPTCHA_MODEL", OPENROUTER_CAPTCHA_MODEL_DEFAULT),
+        "qwen_captcha_model": env.get("QWEN_CAPTCHA_MODEL", QWEN_CAPTCHA_MODEL_DEFAULT),
     }
 
 
@@ -293,13 +288,13 @@ def update_system_config(session: Session, user: User, updates: dict[str, str | 
 def validate_system_config(session: Session, settings: AppSettings) -> list[dict[str, Any]]:
     env = build_pipeline_env(session, settings)
     results = []
-    for key in ("QWEN_API_KEY", "QWEN_INVOICE_MODEL", "OPENROUTER_API_KEY", "OPENROUTER_CAPTCHA_MODEL"):
+    for key in ("QWEN_API_KEY", "QWEN_INVOICE_MODEL", "QWEN_CAPTCHA_MODEL"):
         value = env.get(key)
         ok = bool(value)
         message = "已配置" if ok else "未配置"
         if key == "QWEN_INVOICE_MODEL" and ok:
             message = f"当前模型：{value}"
-        if key == "OPENROUTER_CAPTCHA_MODEL" and ok:
+        if key == "QWEN_CAPTCHA_MODEL" and ok:
             message = f"当前模型：{value}"
         results.append({"key": key, "ok": ok, "message": message})
     return results

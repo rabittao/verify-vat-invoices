@@ -120,8 +120,7 @@ cp .env.example .env
 |---|---|---|
 | `QWEN_API_KEY` | 是 | 抽取发票字段，供 `extract_invoices.py` 调用 DashScope Compatible API |
 | `QWEN_INVOICE_MODEL` | 否 | 发票抽取模型，默认 `qwen3.6-plus` |
-| `OPENROUTER_API_KEY` | 是 | 识别验证码，供 `verify_invoices.js` 调用 OpenRouter |
-| `OPENROUTER_CAPTCHA_MODEL` | 否 | 验证码 OCR 模型，默认 `google/gemini-3-flash-preview` |
+| `QWEN_CAPTCHA_MODEL` | 否 | 验证码 OCR 模型，默认 `qwen3.6-plus`，复用 `QWEN_API_KEY` 调用 DashScope Compatible API |
 | `CHROME_USER_DATA_DIR` | 否 | 指向本地 Chrome 用户目录，便于复用浏览器证书/信任配置 |
 | `API_SECRET_KEY` | 强烈建议 | FastAPI 本地后端签发 bearer token 的签名密钥；未配置时仅会生成当前进程有效的临时随机值 |
 | `APP_ADMIN_USERNAME` | 否 | 启动时自动初始化的本地管理员用户名，默认 `admin` |
@@ -129,8 +128,7 @@ cp .env.example .env
 
 说明：
 
-- 如果没有 `QWEN_API_KEY`，抽取阶段会直接失败
-- 如果没有 `OPENROUTER_API_KEY`，查验阶段中的验证码识别会失败
+- 如果没有 `QWEN_API_KEY`，抽取阶段和查验阶段中的验证码识别都会失败
 - 如果税务网站对浏览器信任链要求更严格，推荐配置 `CHROME_USER_DATA_DIR`
 - 发布或多人共用环境下，请显式设置 `API_SECRET_KEY` 和 `APP_ADMIN_PASSWORD`，不要依赖临时随机值
 
@@ -366,7 +364,7 @@ pytest -q
 - 识别不到明确规则时会刷新验证码，不立即提交
 - 单页内有提交重试和刷新重试
 - `--max-captcha-attempts` 表示页面级重试次数；单页验证码耗尽后，如果还有剩余页面级次数，会重新打开查验页面继续尝试
-- 默认使用 `google/gemini-3-flash-preview` 进行验证码 OCR，也可以通过 `OPENROUTER_CAPTCHA_MODEL` 切换 OpenRouter 上的其他模型
+- 默认使用 `qwen3.6-plus` 进行验证码 OCR，也可以通过 `QWEN_CAPTCHA_MODEL` 切换 DashScope 兼容接口上的其他模型
 
 ## 查验结果判定策略
 

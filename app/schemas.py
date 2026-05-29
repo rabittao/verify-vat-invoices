@@ -318,15 +318,13 @@ class SecretConfigField(BaseModel):
 class SystemConfigResponse(BaseModel):
     qwen_api_key: SecretConfigField
     qwen_invoice_model: str
-    openrouter_api_key: SecretConfigField
-    openrouter_captcha_model: str
+    qwen_captcha_model: str
 
 
 class UpdateSystemConfigRequest(BaseModel):
     qwen_api_key: str | None = Field(default=None)
     qwen_invoice_model: str | None = Field(default=None)
-    openrouter_api_key: str | None = Field(default=None)
-    openrouter_captcha_model: str | None = Field(default=None)
+    qwen_captcha_model: str | None = Field(default=None)
 
 
 class ConfigValidationItem(BaseModel):
