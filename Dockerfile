@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY requirements.txt package.json package-lock.json ./
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl python3-pip \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m pip install --upgrade pip \
     && python3 -m pip install -r requirements.txt \
