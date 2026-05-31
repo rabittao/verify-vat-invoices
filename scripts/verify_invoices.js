@@ -26,11 +26,17 @@ const {
   nowIso,
   resolveCaptchaExhaustion,
   selectBestScreenshotClip,
+  selectVerificationEvidenceScreenshot,
 } = require("./verify_invoices_helpers");
+const {
+  createTimingSpan,
+  measureAsync,
+} = require("./timing_logger");
 
 const VERIFY_URL = "https://inv-veri.chinatax.gov.cn/?a=qyam";
 const MAX_FULL_TEXT_ATTEMPTS = 6;
 const MAX_REFRESH_RETRIES = 40;
+const VERIFICATION_OUTCOME_WAIT_MS = 5000;
 const VERIFY_SINGLE_INVOICE_TIMEOUT_MS = (MAX_FULL_TEXT_ATTEMPTS + 1) * 60 * 1000; // 预算需覆盖完整 captcha 重试，否则真实 captcha_error 会被 script_error timeout 掩盖
 
 loadEnvFile(path.resolve(__dirname, "..", ".env"));
@@ -203,13 +209,34 @@ async function fillField(page, value, selectors, name) {
       window.HTMLInputElement.prototype, "value"
     ).set;
     nativeSetter.call(el, val);
+    const keyboardEventOptions = {
+      bubbles: true,
+      cancelable: true,
+      key: String(val).slice(-1) || "",
+      code: "",
+      keyCode: String(val).slice(-1).charCodeAt(0) || 0,
+      which: String(val).slice(-1).charCodeAt(0) || 0,
+    };
     if (window.jQuery) {
       const $el = window.jQuery(el);
-      ["input", "change", "keyup"].forEach(ev => $el.trigger(ev));
-    } else {
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
+      ["input", "change", "keydown", "keypress", "keyup", "blur"].forEach((ev) => {
+        if (ev.startsWith("key")) {
+          const event = window.jQuery.Event(ev);
+          event.keyCode = keyboardEventOptions.keyCode;
+          event.which = keyboardEventOptions.which;
+          event.key = keyboardEventOptions.key;
+          $el.trigger(event);
+        } else {
+          $el.trigger(ev);
+        }
+      });
     }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", keyboardEventOptions));
+    el.dispatchEvent(new KeyboardEvent("keypress", keyboardEventOptions));
+    el.dispatchEvent(new KeyboardEvent("keyup", keyboardEventOptions));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
   }, cleanValue);
 
   return locator;
@@ -322,50 +349,68 @@ async function callQwenVision(imageBuffer, prompt, options = {}) {
   }
 
   const base64Image = imageBuffer.toString("base64");
+  const maxTokens = options.maxTokens || 20;
   const payload = buildQwenCaptchaPayload({
     prompt,
     base64Image,
     model: QWEN_CAPTCHA_MODEL,
-    maxTokens: options.maxTokens || 20,
+    maxTokens,
   });
 
-  let response;
-  try {
-    response = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${QWEN_API_KEY}`,
-      },
-      body: JSON.stringify(payload),
-    });
-  } catch (error) {
-    throw buildContextualError("Qwen captcha fetch failed", error, {
+  return measureAsync(
+    options.timingStage || "qwen_vision",
+    async () => {
+      let response;
+      try {
+        response = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${QWEN_API_KEY}`,
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        throw buildContextualError("Qwen captcha fetch failed", error, {
+          model: QWEN_CAPTCHA_MODEL,
+          max_tokens: maxTokens,
+        });
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Qwen captcha API error: ${response.status} - ${errorText}`);
+      }
+
+      const data = await response.json();
+      const content = extractQwenOutputText(data);
+      const parsed = parseCaptchaResponse(content);
+      return {
+        result: parsed,
+        rawContent: content,
+        model: QWEN_CAPTCHA_MODEL,
+      };
+    },
+    {
       model: QWEN_CAPTCHA_MODEL,
-      max_tokens: options.maxTokens || 20,
-    });
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Qwen captcha API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  const content = extractQwenOutputText(data);
-  const parsed = parseCaptchaResponse(content);
-  return {
-    result: parsed,
-    rawContent: content,
-    model: QWEN_CAPTCHA_MODEL,
-  };
+      max_tokens: maxTokens,
+      image_bytes: imageBuffer.length,
+      ...(options.timingMetadata || {}),
+    }
+  );
 }
 
-async function captureCaptchaWithVisionModel(imageBuffer, promptText) {
+async function captureCaptchaWithVisionModel(imageBuffer, promptText, timingMetadata = {}) {
   const prompt = buildCaptchaPrompt(promptText);
   let apiResult;
   try {
-    apiResult = await callQwenVision(imageBuffer, prompt);
+    apiResult = await callQwenVision(imageBuffer, prompt, {
+      timingStage: "captcha_ocr",
+      timingMetadata: {
+        prompt_chars: String(promptText || "").length,
+        ...timingMetadata,
+      },
+    });
   } catch (error) {
     throw buildContextualError("Captcha OCR request failed", error, {
       model: QWEN_CAPTCHA_MODEL,
@@ -393,7 +438,7 @@ function buildVerificationScreenshotPrompt() {
   ].join(" ");
 }
 
-async function classifyVerificationScreenshot(screenshotPath) {
+async function classifyVerificationScreenshot(screenshotPath, timingMetadata = {}) {
   if (!screenshotPath || !fs.existsSync(screenshotPath)) {
     return null;
   }
@@ -404,7 +449,14 @@ async function classifyVerificationScreenshot(screenshotPath) {
     apiResult = await callQwenVision(
       screenshotBuffer,
       buildVerificationScreenshotPrompt(),
-      { maxTokens: 120 }
+      {
+        maxTokens: 120,
+        timingStage: "screenshot_fallback_vision",
+        timingMetadata: {
+          screenshot: path.basename(screenshotPath),
+          ...timingMetadata,
+        },
+      }
     );
   } catch (error) {
     throw buildContextualError("Verification screenshot classification failed", error, {
@@ -568,7 +620,12 @@ function normalizeCollectedSignals(signals) {
   };
 }
 
-async function waitForVerificationOutcome(page, timeoutMs = 15000, intervalMs = 300) {
+async function waitForVerificationOutcome(page, timingMetadata = {}, timeoutMs = VERIFICATION_OUTCOME_WAIT_MS, intervalMs = 300) {
+  const finishTiming = createTimingSpan("page_wait", {
+    timeout_ms: timeoutMs,
+    interval_ms: intervalMs,
+    ...timingMetadata,
+  });
   const deadline = Date.now() + timeoutMs;
   let latestSignals = normalizeCollectedSignals(await collectVerificationSignals(page));
   let latestClassification = classifyVerificationSignals(latestSignals);
@@ -578,6 +635,10 @@ async function waitForVerificationOutcome(page, timeoutMs = 15000, intervalMs = 
     latestClassification = classifyVerificationSignals(latestSignals);
 
     if (["success", "daily_limit_exceeded", "data_mismatch"].includes(latestClassification.status)) {
+      finishTiming({
+        status: latestClassification.status,
+        outcome: "terminal",
+      });
       return {
         signals: latestSignals,
         classified: latestClassification,
@@ -589,6 +650,10 @@ async function waitForVerificationOutcome(page, timeoutMs = 15000, intervalMs = 
 
   latestSignals = normalizeCollectedSignals(await collectVerificationSignals(page));
   latestClassification = classifyVerificationSignals(latestSignals);
+  finishTiming({
+    status: latestClassification.status,
+    outcome: "timeout",
+  });
 
   return {
     signals: latestSignals,
@@ -708,15 +773,66 @@ function preprocessCaptchaImages(imageBuffer, artifactsDir, screenshotBase, atte
   return paths;
 }
 
-async function collectCaptchaCandidates(captchaBuffer, promptText) {
+async function collectCaptchaCandidates(captchaBuffer, promptText, timingMetadata = {}) {
   // Single call to vision model
-  return await captureCaptchaWithVisionModel(captchaBuffer, promptText);
+  return await captureCaptchaWithVisionModel(captchaBuffer, promptText, timingMetadata);
 }
 
 async function refreshCaptcha(page, captchaImage) {
   // 先强制关闭所有弹窗
   await forceCloseDialogs(page);
-  await captchaImage.click({ force: true });
+  let target = captchaImage;
+  if (!(await target.isVisible().catch(() => false))) {
+    target = await findCaptchaImage(page);
+  }
+
+  try {
+    await target.click({ force: true, timeout: 3000 });
+  } catch (error) {
+    console.log(`[captcha] Normal refresh click failed, falling back to DOM click: ${error.message}`);
+    const clicked = await target.evaluate((el) => {
+      if (!el || !el.isConnected) {
+        return false;
+      }
+      el.click();
+      el.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      }));
+      return true;
+    }).catch(() => false);
+    if (!clicked) {
+      const selectorClicked = await page.evaluate(() => {
+        const selectors = [
+          "#yzm_img",
+          "img[alt*='验证码']",
+          "img[title*='验证码']",
+          "img[src*='yzm']",
+          "img[src*='captcha']",
+          ".yzm img",
+        ];
+        for (const selector of selectors) {
+          for (const el of document.querySelectorAll(selector)) {
+            if (!el || !el.isConnected) {
+              continue;
+            }
+            el.click();
+            el.dispatchEvent(new MouseEvent("click", {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+            }));
+            return true;
+          }
+        }
+        return false;
+      });
+      if (!selectorClicked) {
+        throw error;
+      }
+    }
+  }
   await page.waitForTimeout(600);
 }
 
@@ -726,7 +842,22 @@ async function waitForSubmitButton(page, timeout = 5000) {
   // Wait for #checkfp to become visible after form is filled.
   try {
     const button = page.locator("#checkfp");
-    await button.waitFor({ state: "visible", timeout });
+    await page.waitForFunction(() => {
+      function isVisible(el) {
+        if (!el || !el.isConnected) {
+          return false;
+        }
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+          return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }
+      const liveButton = document.querySelector("#checkfp");
+      const disabledButton = document.querySelector("#uncheckfp");
+      return isVisible(liveButton) && !isVisible(disabledButton);
+    }, { timeout });
     return button;
   } catch (_) {
     return null;
@@ -784,7 +915,12 @@ async function readCaptchaChallenge(page, record, artifactsDir, screenshotBase, 
   const ocrBuffer = captchaBuffer;
   const ocrImagePath = preprocessed.original;
 
-  const candidateBundle = await collectCaptchaCandidates(ocrBuffer, promptText);
+  const candidateBundle = await collectCaptchaCandidates(ocrBuffer, promptText, {
+    invoice_key: buildInvoiceKey(record),
+    attempt,
+    retry: captchaRetry,
+    captcha_rule: captchaRule,
+  });
   const captchaCandidates = [candidateBundle.primaryCaptcha, ...candidateBundle.alternativeCaptchas].filter(Boolean);
   return {
     pageText,
@@ -977,7 +1113,11 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
       }
       await submitButton.click();
 
-      const outcome = await waitForVerificationOutcome(page);
+      const outcome = await waitForVerificationOutcome(page, {
+        invoice_key: buildInvoiceKey(record),
+        attempt,
+        retry: captchaRetryCount,
+      });
       let classified = outcome.classified;
       let verificationSignals = outcome.signals;
 
@@ -991,8 +1131,15 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
         }
       }
 
-      const screenshotPath = path.join(artifactsDir, `${screenshotBase}-attempt-${attempt}-retry-${captchaRetryCount}-result.png`);
-      await page.screenshot({ path: screenshotPath, fullPage: true });
+      const fullPageScreenshotPath = path.join(artifactsDir, `${screenshotBase}-attempt-${attempt}-retry-${captchaRetryCount}-result.png`);
+      let screenshotPath = null;
+      const ensureFullPageScreenshot = async () => {
+        if (!screenshotPath) {
+          await page.screenshot({ path: fullPageScreenshotPath, fullPage: true });
+          screenshotPath = fullPageScreenshotPath;
+        }
+        return screenshotPath;
+      };
       let modalScreenshotPath = null;
       const screenshotClip = await getVerificationScreenshotClip(page);
       if (screenshotClip) {
@@ -1017,12 +1164,30 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
 
       let screenshotFallback = null;
       if (shouldRetryVerificationStatus(classified.status)) {
+        const finishScreenshotFallbackTiming = createTimingSpan("screenshot_fallback", {
+          invoice_key: buildInvoiceKey(record),
+          attempt,
+          retry: captchaRetryCount,
+          status_before: classified.status,
+        });
         try {
           const modalFallback = modalScreenshotPath
-            ? await classifyVerificationScreenshot(modalScreenshotPath)
+            ? await classifyVerificationScreenshot(modalScreenshotPath, {
+              invoice_key: buildInvoiceKey(record),
+              attempt,
+              retry: captchaRetryCount,
+              source: "modal",
+              status_before: classified.status,
+            })
             : null;
           const fullPageFallback = shouldRunFullPageScreenshotFallback(modalFallback?.classified || null)
-            ? await classifyVerificationScreenshot(screenshotPath)
+            ? await classifyVerificationScreenshot(await ensureFullPageScreenshot(), {
+              invoice_key: buildInvoiceKey(record),
+              attempt,
+              retry: captchaRetryCount,
+              source: "full_page",
+              status_before: classified.status,
+            })
             : null;
           const resolvedFallback = resolveScreenshotFallbackClassification(classified, [
             modalFallback ? { source: "modal", ...modalFallback } : null,
@@ -1036,18 +1201,31 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
             appliedSource: resolvedFallback.appliedSource,
           };
           classified = resolvedFallback.classification || classified;
+          finishScreenshotFallbackTiming({
+            outcome: "classified",
+            applied_source: screenshotFallback.appliedSource || "none",
+            status_after: classified.status,
+          });
         } catch (error) {
           screenshotFallback = {
             modal: null,
             fullPage: null,
             rawOutput: `screenshot_fallback_error: ${error.message}`,
           };
+          finishScreenshotFallbackTiming({
+            outcome: "error",
+            error: error.message || String(error),
+          });
         }
       }
 
       // 更新本次重试历史中的结果截图
+      let evidenceScreenshotPath = selectVerificationEvidenceScreenshot({
+        modalScreenshotPath,
+        fullPageScreenshotPath: screenshotPath,
+      });
       if (captchaRetryHistory.length > 0) {
-        captchaRetryHistory[captchaRetryHistory.length - 1].result_screenshot = screenshotPath;
+        captchaRetryHistory[captchaRetryHistory.length - 1].result_screenshot = evidenceScreenshotPath;
       }
 
       if (shouldRetryVerificationStatus(classified.status)) {
@@ -1081,6 +1259,10 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
       }
 
       // 成功或page_variant_changed，直接返回
+      evidenceScreenshotPath = selectVerificationEvidenceScreenshot({
+        modalScreenshotPath,
+        fullPageScreenshotPath: screenshotPath,
+      }) || await ensureFullPageScreenshot();
       return {
         invoice_key: buildInvoiceKey(record),
         verification_status: classified.status,
@@ -1096,7 +1278,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
         verified_at: nowIso(),
         verification_amount_type: amountInfo.type,
         verification_amount_used: amountInfo.value,
-        result_screenshot: screenshotPath,
+        result_screenshot: evidenceScreenshotPath,
         result_text: [
           `captcha_hint_text: ${challenge.promptText}`,
           `captcha_confidence: ${candidateBundle.confidenceNote || "n/a"}`,
@@ -1267,10 +1449,14 @@ async function main() {
         } catch (_) {
           // Ignore screenshot failures.
         }
+        const errorMessage = String(error.message || error);
+        const isVerificationTimeout = /verifySingleInvoice timed out/.test(errorMessage);
         resultsByKey[invoiceKey] = {
           invoice_key: invoiceKey,
-          verification_status: "script_error",
-          verification_message: String(error.message || error),
+          verification_status: isVerificationTimeout ? "captcha_error" : "script_error",
+          verification_message: isVerificationTimeout
+            ? "验证码多次尝试后仍未完成核验（超时）"
+            : errorMessage,
           captcha_attempts: 0,
           captcha_rule: null,
           captcha_rule_display: null,

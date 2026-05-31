@@ -151,6 +151,19 @@ class BasicInvoiceInfo(BaseModel):
     check_code: str | None
 
 
+class QrInvoiceParseRequest(BaseModel):
+    raw_text: str = Field(..., min_length=1, max_length=4096)
+
+
+class QrInvoiceParseResponse(BasicInvoiceInfo):
+    invoice_key: str | None
+    confidence: str
+    parse_message: str
+    validation_status: str
+    validation_errors: list[str]
+    cache_hit: bool = False
+
+
 class ProcessingInfo(BaseModel):
     extraction_status: str | None
     extraction_message: str | None

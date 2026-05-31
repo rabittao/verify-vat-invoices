@@ -95,6 +95,10 @@ function selectBestScreenshotClip(candidates, viewport, padding = 16) {
   };
 }
 
+function selectVerificationEvidenceScreenshot({ modalScreenshotPath, fullPageScreenshotPath } = {}) {
+  return modalScreenshotPath || fullPageScreenshotPath || null;
+}
+
 function resolveCaptchaExhaustion({
   attempt,
   maxCaptchaAttempts,
@@ -149,4 +153,5 @@ module.exports = {
   nowIso,
   resolveCaptchaExhaustion,
   selectBestScreenshotClip,
+  selectVerificationEvidenceScreenshot,
 };

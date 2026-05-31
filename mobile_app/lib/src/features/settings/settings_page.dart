@@ -18,6 +18,7 @@ class SettingsPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authControllerProvider);
     final baseUrl = ref.watch(apiBaseUrlProvider);
+    final endpointState = ref.watch(apiEndpointControllerProvider);
     return Scaffold(
       backgroundColor: _settingsCanvas,
       appBar: AppBar(
@@ -64,11 +65,23 @@ class SettingsPage extends ConsumerWidget {
               detail: '用于标识当前登录身份与权限角色。',
             ),
             const SizedBox(height: 12),
-            _SettingsCard(
-              icon: Icons.link_outlined,
-              title: '后端地址',
-              subtitle: baseUrl,
-              detail: '移动端所有任务、台账与配置请求都将发送到这个地址。',
+            _EndpointSwitchCard(
+              label: endpointState.label,
+              baseUrl: baseUrl,
+              isLocal: endpointState.isLocal,
+              onChanged: (useLocal) async {
+                final controller =
+                    ref.read(apiEndpointControllerProvider.notifier);
+                if (useLocal) {
+                  await controller.useLocal();
+                } else {
+                  await controller.useServer();
+                }
+                await ref.read(authControllerProvider.notifier).logout();
+                if (context.mounted) {
+                  context.go('/login');
+                }
+              },
             ),
             const SizedBox(height: 12),
             _SettingsNavigationCard(
@@ -321,6 +334,102 @@ class _SettingsCard extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EndpointSwitchCard extends StatelessWidget {
+  const _EndpointSwitchCard({
+    required this.label,
+    required this.baseUrl,
+    required this.isLocal,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String baseUrl;
+  final bool isLocal;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _settingsLine),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x10073B2A),
+            blurRadius: 18,
+            offset: Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F3EE),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(Icons.link_outlined, color: _settingsGreenDeep),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '后端地址',
+                  style: TextStyle(
+                    color: _settingsGreenDeep,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$label · $baseUrl',
+                  style: const TextStyle(
+                    color: Color(0xFF20332B),
+                    fontWeight: FontWeight.w600,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '打开开关使用本地后端，关闭开关使用服务器后端。切换后会退出当前登录态，避免跨环境 token 混用。',
+                  style: TextStyle(color: _settingsMuted, height: 1.45),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            children: [
+              Switch(
+                value: isLocal,
+                onChanged: onChanged,
+                activeThumbColor: _settingsGreen,
+              ),
+              Text(
+                isLocal ? '本地' : '服务器',
+                style: const TextStyle(
+                  color: _settingsMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ],
       ),

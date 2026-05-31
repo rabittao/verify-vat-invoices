@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/models/app_state_models.dart';
 import '../../core/network/api_client.dart';
@@ -14,6 +16,14 @@ final taskListProvider =
     AutoDisposeAsyncNotifierProvider<TaskListController, TaskListState>(
   TaskListController.new,
 );
+
+bool get _supportsCameraQrScan {
+  if (kIsWeb) {
+    return false;
+  }
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+}
 
 class TaskListController extends AutoDisposeAsyncNotifier<TaskListState> {
   static const _defaultCompletedPageSize = 20;
@@ -202,6 +212,13 @@ class TaskListPage extends ConsumerWidget {
     }
   }
 
+  Future<void> _showQrUploadDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _QrUploadDialog(cameraScanEnabled: _supportsCameraQrScan),
+    );
+  }
+
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
@@ -345,8 +362,24 @@ class TaskListPage extends ConsumerWidget {
           Positioned(
             right: 22,
             bottom: 18,
-            child: _UploadTaskButton(
-              onPressed: () => _pickPdfFiles(context, ref),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _TaskActionButton(
+                  icon: Icons.qr_code_scanner_rounded,
+                  label: '扫码上传',
+                  color: const Color(0xFF244E43),
+                  onPressed: () => _showQrUploadDialog(context),
+                ),
+                const SizedBox(height: 10),
+                _TaskActionButton(
+                  icon: Icons.upload_rounded,
+                  label: '上传发票',
+                  color: const Color(0xFF166246),
+                  onPressed: () => _pickPdfFiles(context, ref),
+                ),
+              ],
             ),
           ),
         ],
@@ -355,11 +388,17 @@ class TaskListPage extends ConsumerWidget {
   }
 }
 
-class _UploadTaskButton extends StatelessWidget {
-  const _UploadTaskButton({
+class _TaskActionButton extends StatelessWidget {
+  const _TaskActionButton({
+    required this.icon,
+    required this.label,
+    required this.color,
     required this.onPressed,
   });
 
+  final IconData icon;
+  final String label;
+  final Color color;
   final VoidCallback onPressed;
 
   @override
@@ -375,17 +414,17 @@ class _UploadTaskButton extends StatelessWidget {
         child: Ink(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFF166246),
+            color: color,
             borderRadius: BorderRadius.circular(999),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.upload_rounded, color: Colors.white, size: 20),
-              SizedBox(height: 4),
+            children: [
+              Icon(icon, color: Colors.white, size: 20),
+              const SizedBox(height: 4),
               Text(
-                '上传发票',
-                style: TextStyle(
+                label,
+                style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
                 ),
@@ -393,6 +432,442 @@ class _UploadTaskButton extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _QrUploadDialog extends ConsumerStatefulWidget {
+  const _QrUploadDialog({
+    required this.cameraScanEnabled,
+  });
+
+  final bool cameraScanEnabled;
+
+  @override
+  ConsumerState<_QrUploadDialog> createState() => _QrUploadDialogState();
+}
+
+class _QrUploadDialogState extends ConsumerState<_QrUploadDialog> {
+  final _controller = TextEditingController();
+  MobileScannerController? _scannerController;
+  QrInvoiceParseResult? _result;
+  String? _parsedRawText;
+  String? _errorMessage;
+  bool _submitting = false;
+  bool _cameraMode = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scannerController?.dispose();
+    super.dispose();
+  }
+
+  void _openCameraScanner() {
+    setState(() {
+      _scannerController ??= MobileScannerController(
+        detectionSpeed: DetectionSpeed.noDuplicates,
+        formats: const [BarcodeFormat.qrCode],
+      );
+      _cameraMode = true;
+      _errorMessage = null;
+      _result = null;
+      _parsedRawText = null;
+    });
+  }
+
+  Future<void> _closeCameraScanner() async {
+    await _scannerController?.stop();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _cameraMode = false;
+    });
+  }
+
+  Future<void> _handleBarcodeCapture(BarcodeCapture capture) async {
+    if (_submitting || !_cameraMode) {
+      return;
+    }
+    String? rawValue;
+    for (final barcode in capture.barcodes) {
+      final value = barcode.rawValue?.trim();
+      if (value != null && value.isNotEmpty) {
+        rawValue = value;
+        break;
+      }
+    }
+    if (rawValue == null) {
+      return;
+    }
+    _controller.text = rawValue;
+    await _parse(closeScanner: true);
+  }
+
+  Future<void> _parse({bool closeScanner = false}) async {
+    final rawText = _controller.text.trim();
+    await _parseRawText(rawText, closeScanner: closeScanner);
+  }
+
+  Future<QrInvoiceParseResult?> _parseRawText(
+    String rawText, {
+    bool closeScanner = false,
+  }) async {
+    if (rawText.isEmpty) {
+      setState(() {
+        _errorMessage = '请先扫码或粘贴二维码内容';
+        _result = null;
+        _parsedRawText = null;
+      });
+      return null;
+    }
+    setState(() {
+      _submitting = true;
+      _errorMessage = null;
+    });
+    if (closeScanner) {
+      await _scannerController?.stop();
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _cameraMode = false;
+      });
+    }
+    try {
+      final result = await ref.read(apiClientProvider).parseInvoiceQr(rawText);
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _result = result;
+        _parsedRawText = rawText;
+        _submitting = false;
+      });
+      return result;
+    } catch (error) {
+      if (!mounted) {
+        return null;
+      }
+      setState(() {
+        _errorMessage = '二维码解析失败：${_humanizeTaskListError(error)}';
+        _result = null;
+        _parsedRawText = null;
+        _submitting = false;
+      });
+      return null;
+    }
+  }
+
+  Future<void> _verify() async {
+    final rawText = _controller.text.trim();
+    var result = _result;
+    if (result == null || _parsedRawText != rawText) {
+      result = await _parseRawText(rawText);
+      if (!mounted || result == null) {
+        return;
+      }
+    }
+    if (result.validationStatus != 'pass') {
+      setState(() {
+        _errorMessage = '二维码字段不完整，不能创建核验任务';
+      });
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _errorMessage = null;
+    });
+    try {
+      final jobId = await ref.read(apiClientProvider).verifyInvoiceQr(rawText);
+      ref.invalidate(taskListProvider);
+      if (!mounted) {
+        return;
+      }
+      final router = GoRouter.of(context);
+      Navigator.of(context).pop();
+      router.go('/tasks/$jobId');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = '创建核验任务失败：${_humanizeTaskListError(error)}';
+        _submitting = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('扫码上传发票信息'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                widget.cameraScanEnabled
+                    ? '可以直接调用摄像头扫描发票二维码，也可以粘贴扫码枪或手机扫码得到的二维码内容。'
+                    : '当前桌面端支持扫码枪/手机扫码后粘贴二维码内容；移动端会显示摄像头扫码入口。',
+                style: theme.textTheme.bodySmall,
+              ),
+              if (widget.cameraScanEnabled) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 56,
+                  child: FilledButton.icon(
+                    onPressed: _submitting
+                        ? null
+                        : (_cameraMode
+                            ? _closeCameraScanner
+                            : _openCameraScanner),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF08785D),
+                      foregroundColor: Colors.white,
+                      textStyle: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                    ),
+                    icon: Icon(
+                      _cameraMode
+                          ? Icons.keyboard_rounded
+                          : Icons.qr_code_scanner_rounded,
+                    ),
+                    label: Text(_cameraMode ? '改为粘贴输入' : '打开摄像头扫码'),
+                  ),
+                ),
+              ],
+              if (_cameraMode) ...[
+                const SizedBox(height: 12),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: SizedBox(
+                    height: 280,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        MobileScanner(
+                          controller: _scannerController,
+                          onDetect: _handleBarcodeCapture,
+                        ),
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            color: Colors.black.withValues(alpha: 0.48),
+                            child: const Text(
+                              '将发票二维码放入取景框，识别后会自动解析',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _controller,
+                enabled: !_submitting && !_cameraMode,
+                minLines: 3,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '二维码内容',
+                  hintText: '例如：01,20,26317000001011694315,20260328,330.19',
+                  prefixIcon: Icon(Icons.qr_code_2_rounded),
+                ),
+              ),
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 12),
+                _QrFeedbackBox(
+                  color: const Color(0xFFFFE4E0),
+                  textColor: const Color(0xFF9F1D1D),
+                  icon: Icons.error_outline_rounded,
+                  message: _errorMessage!,
+                ),
+              ],
+              if (_result != null) ...[
+                const SizedBox(height: 12),
+                _QrResultCard(result: _result!),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+          child: const Text('关闭'),
+        ),
+        FilledButton.icon(
+          onPressed: _submitting ? null : _verify,
+          icon: _submitting
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.verified_rounded),
+          label: Text(_submitting ? '处理中' : '确认核验'),
+        ),
+      ],
+    );
+  }
+}
+
+class _QrResultCard extends StatelessWidget {
+  const _QrResultCard({required this.result});
+
+  final QrInvoiceParseResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final passed = result.validationStatus == 'pass';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: passed ? const Color(0xFFEAF5ED) : const Color(0xFFFFF6ED),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: passed ? const Color(0xFFC8DECF) : const Color(0xFFF1CEAD),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                passed ? Icons.check_circle_outline : Icons.info_outline,
+                size: 18,
+                color:
+                    passed ? const Color(0xFF166246) : const Color(0xFF955B20),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  result.cacheHit
+                      ? '${result.parseMessage}（缓存命中）'
+                      : result.parseMessage,
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          _QrResultRow(label: '发票类型', value: result.invoiceType),
+          _QrResultRow(label: '发票代码', value: result.invoiceCode),
+          _QrResultRow(label: '发票号码', value: result.invoiceNumber),
+          _QrResultRow(label: '开票日期', value: result.invoiceDate),
+          _QrResultRow(label: '不含税金额', value: result.pretaxAmount),
+          _QrResultRow(label: '校验码', value: result.checkCode),
+          if (result.validationErrors.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              '缺失字段：${result.validationErrors.join('、')}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF955B20),
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _QrResultRow extends StatelessWidget {
+  const _QrResultRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String? value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 78,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF64756D),
+                  ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value?.trim().isNotEmpty == true ? value! : '-',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QrFeedbackBox extends StatelessWidget {
+  const _QrFeedbackBox({
+    required this.color,
+    required this.textColor,
+    required this.icon,
+    required this.message,
+  });
+
+  final Color color;
+  final Color textColor;
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: textColor, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: textColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ),
+        ],
       ),
     );
   }

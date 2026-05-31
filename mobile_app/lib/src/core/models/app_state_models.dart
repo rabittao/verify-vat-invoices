@@ -34,6 +34,7 @@ class AuthState {
     String? role,
     String? pendingRouteAfterLogin,
     String? errorMessage,
+    bool clearErrorMessage = false,
   }) {
     return AuthState(
       isLoading: isLoading ?? this.isLoading,
@@ -43,7 +44,8 @@ class AuthState {
       role: role ?? this.role,
       pendingRouteAfterLogin:
           pendingRouteAfterLogin ?? this.pendingRouteAfterLogin,
-      errorMessage: errorMessage ?? this.errorMessage,
+      errorMessage:
+          clearErrorMessage ? null : errorMessage ?? this.errorMessage,
     );
   }
 }
@@ -84,6 +86,68 @@ class LoginResult {
   final String accessToken;
   final String username;
   final String role;
+}
+
+class QrInvoiceParseResult {
+  const QrInvoiceParseResult({
+    required this.invoiceType,
+    required this.invoiceCode,
+    required this.invoiceNumber,
+    required this.invoiceDate,
+    required this.pretaxAmount,
+    required this.taxAmount,
+    required this.totalAmount,
+    required this.sellerName,
+    required this.buyerName,
+    required this.checkCode,
+    required this.invoiceKey,
+    required this.confidence,
+    required this.parseMessage,
+    required this.validationStatus,
+    required this.validationErrors,
+    required this.cacheHit,
+  });
+
+  final String? invoiceType;
+  final String? invoiceCode;
+  final String? invoiceNumber;
+  final String? invoiceDate;
+  final String? pretaxAmount;
+  final String? taxAmount;
+  final String? totalAmount;
+  final String? sellerName;
+  final String? buyerName;
+  final String? checkCode;
+  final String? invoiceKey;
+  final String confidence;
+  final String parseMessage;
+  final String validationStatus;
+  final List<String> validationErrors;
+  final bool cacheHit;
+
+  factory QrInvoiceParseResult.fromJson(Map<String, dynamic> json) {
+    return QrInvoiceParseResult(
+      invoiceType: json['invoice_type'] as String?,
+      invoiceCode: json['invoice_code'] as String?,
+      invoiceNumber: json['invoice_number'] as String?,
+      invoiceDate: json['invoice_date'] as String?,
+      pretaxAmount: json['pretax_amount'] as String?,
+      taxAmount: json['tax_amount'] as String?,
+      totalAmount: json['total_amount'] as String?,
+      sellerName: json['seller_name'] as String?,
+      buyerName: json['buyer_name'] as String?,
+      checkCode: json['check_code'] as String?,
+      invoiceKey: json['invoice_key'] as String?,
+      confidence: json['confidence'] as String? ?? 'low',
+      parseMessage: json['parse_message'] as String? ?? '',
+      validationStatus: json['validation_status'] as String? ?? 'fail',
+      validationErrors:
+          (json['validation_errors'] as List<dynamic>? ?? const [])
+              .map((entry) => entry.toString())
+              .toList(),
+      cacheHit: json['cache_hit'] as bool? ?? false,
+    );
+  }
 }
 
 class TaskCardModel {

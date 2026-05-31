@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -73,11 +74,20 @@ class AuthController extends StateNotifier<AuthState> {
     required String username,
     required String password,
   }) async {
-    state = state.copyWith(isLoading: true, errorMessage: null);
+    final normalizedUsername = username.trim();
+    if (normalizedUsername.isEmpty || password.isEmpty) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: '请输入用户名和密码',
+      );
+      return false;
+    }
+
+    state = state.copyWith(isLoading: true, clearErrorMessage: true);
     try {
       final result = await _ref
           .read(rawApiClientProvider)
-          .login(username: username, password: password);
+          .login(username: normalizedUsername, password: password);
       final storage = _ref.read(authStorageProvider);
       await storage.write('access_token', result.accessToken);
       await storage.write('username', result.username);
@@ -94,7 +104,10 @@ class AuthController extends StateNotifier<AuthState> {
       );
       return true;
     } catch (error) {
-      state = state.copyWith(isLoading: false, errorMessage: '登录失败：$error');
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: '登录失败：${_formatLoginError(error)}',
+      );
       return false;
     }
   }
@@ -118,6 +131,33 @@ final authControllerProvider =
     StateNotifierProvider<AuthController, AuthState>((ref) {
   return AuthController(ref);
 });
+
+String _formatLoginError(Object error) {
+  if (error is DioException) {
+    final baseUrl = error.requestOptions.baseUrl;
+    final response = error.response;
+    final data = response?.data;
+    if (data is Map<String, dynamic>) {
+      final detail = data['detail'];
+      if (detail is String && detail.trim().isNotEmpty) {
+        return detail;
+      }
+    }
+    if (response?.statusCode == 401) {
+      return '用户名或密码错误';
+    }
+    if (response?.statusCode != null) {
+      return '服务器返回 ${response!.statusCode}';
+    }
+    final message = error.message ?? error.error?.toString() ?? '网络连接失败';
+    if (error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout) {
+      return '无法连接后端 $baseUrl。请确认手机和 Mac 在同一网络、Mac 后端监听 0.0.0.0:8000，并允许本地网络访问。原始错误：$message';
+    }
+    return '$message（API：$baseUrl）';
+  }
+  return error.toString();
+}
 
 final selectedUploadFilesProvider =
     StateProvider<List<UploadDraft>>((ref) => const []);

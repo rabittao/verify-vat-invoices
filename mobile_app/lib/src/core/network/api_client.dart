@@ -4,18 +4,98 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/app_state_models.dart';
 import '../../router.dart';
 
-const defaultApiBaseUrl = 'http://124.221.241.208';
+const localApiBaseUrl = String.fromEnvironment(
+  'LOCAL_API_BASE_URL',
+  defaultValue: 'http://127.0.0.1:8000',
+);
+const serverApiBaseUrl = 'http://124.221.241.208';
+const defaultApiBaseUrl = serverApiBaseUrl;
+const _apiBaseUrlPrefsKey = 'api_base_url';
+const _configuredApiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
-final apiBaseUrlProvider = StateProvider<String>((ref) {
-  const configuredApiBaseUrl = String.fromEnvironment('API_BASE_URL');
-  if (configuredApiBaseUrl.trim().isNotEmpty) {
-    return _normalizeBaseUrl(configuredApiBaseUrl);
+String _initialApiBaseUrl() {
+  if (_configuredApiBaseUrl.trim().isNotEmpty) {
+    return _normalizeBaseUrl(_configuredApiBaseUrl);
   }
   return defaultApiBaseUrl;
+}
+
+class ApiEndpointState {
+  const ApiEndpointState({
+    required this.baseUrl,
+    required this.isLoading,
+  });
+
+  final String baseUrl;
+  final bool isLoading;
+
+  bool get isLocal => baseUrl == localApiBaseUrl;
+  bool get isServer => baseUrl == serverApiBaseUrl;
+  String get label => isLocal ? '本地后端' : (isServer ? '服务器后端' : '自定义后端');
+
+  ApiEndpointState copyWith({
+    String? baseUrl,
+    bool? isLoading,
+  }) {
+    return ApiEndpointState(
+      baseUrl: baseUrl ?? this.baseUrl,
+      isLoading: isLoading ?? this.isLoading,
+    );
+  }
+}
+
+class ApiEndpointController extends StateNotifier<ApiEndpointState> {
+  ApiEndpointController()
+      : super(
+            ApiEndpointState(baseUrl: _initialApiBaseUrl(), isLoading: true)) {
+    _restore();
+  }
+
+  Future<void> _restore() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_configuredApiBaseUrl.trim().isNotEmpty) {
+      final configured = _normalizeBaseUrl(_configuredApiBaseUrl);
+      await prefs.setString(_apiBaseUrlPrefsKey, configured);
+      state = state.copyWith(baseUrl: configured, isLoading: false);
+      return;
+    }
+    final savedBaseUrl = prefs.getString(_apiBaseUrlPrefsKey);
+    state = state.copyWith(
+      baseUrl: savedBaseUrl == null
+          ? state.baseUrl
+          : _normalizeBaseUrl(savedBaseUrl),
+      isLoading: false,
+    );
+  }
+
+  Future<void> useLocal() => setBaseUrl(localApiBaseUrl);
+
+  Future<void> useServer() => setBaseUrl(serverApiBaseUrl);
+
+  Future<void> togglePreset() {
+    return state.isLocal ? useServer() : useLocal();
+  }
+
+  Future<void> setBaseUrl(String baseUrl) async {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_apiBaseUrlPrefsKey, normalized);
+    state = state.copyWith(baseUrl: normalized, isLoading: false);
+  }
+}
+
+final apiEndpointControllerProvider =
+    StateNotifierProvider<ApiEndpointController, ApiEndpointState>((ref) {
+  return ApiEndpointController();
+});
+
+final apiBaseUrlProvider = Provider<String>((ref) {
+  return ref.watch(apiEndpointControllerProvider).baseUrl;
 });
 
 const _allowInsecureApiCert = bool.fromEnvironment('ALLOW_INSECURE_API_CERT');
@@ -68,33 +148,110 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 
 Dio _buildDio(BaseOptions options) {
   final dio = Dio(options);
-  _configureDebugCertificateBypass(dio, options.baseUrl);
+  _configureIoHttpClient(dio, options.baseUrl);
   return dio;
 }
 
-void _configureDebugCertificateBypass(Dio dio, String baseUrl) {
-  if (!kDebugMode || !_allowInsecureApiCert) {
+void _configureIoHttpClient(Dio dio, String baseUrl) {
+  if (kIsWeb) {
     return;
   }
   final uri = Uri.tryParse(baseUrl);
-  if (uri == null || uri.scheme != 'https' || uri.host != '124.221.241.208') {
+  if (uri == null) {
+    return;
+  }
+  final forceDirect = _isLanOrLoopbackHost(uri.host);
+  final allowBadServerIpCert = kDebugMode &&
+      _allowInsecureApiCert &&
+      uri.scheme == 'https' &&
+      uri.host == '124.221.241.208';
+  if (!forceDirect && !allowBadServerIpCert) {
     return;
   }
   dio.httpClientAdapter = IOHttpClientAdapter(
     createHttpClient: () {
       final client = HttpClient();
-      client.badCertificateCallback = (_, host, __) {
-        return host == '124.221.241.208';
-      };
+      if (forceDirect) {
+        // Local backend debugging must bypass system proxy/TUN rules; otherwise
+        // iOS can report "No route to host" even while Safari reaches the LAN IP.
+        client.findProxy = (_) => 'DIRECT';
+      }
+      if (allowBadServerIpCert) {
+        client.badCertificateCallback = (_, host, __) {
+          return host == '124.221.241.208';
+        };
+      }
       return client;
     },
   );
+}
+
+bool _isLanOrLoopbackHost(String host) {
+  final normalized = host.toLowerCase();
+  if (normalized == 'localhost') {
+    return true;
+  }
+  final address = InternetAddress.tryParse(normalized);
+  if (address == null) {
+    return false;
+  }
+  if (address.isLoopback || address.isLinkLocal) {
+    return true;
+  }
+  if (address.type != InternetAddressType.IPv4) {
+    return false;
+  }
+  final parts = normalized.split('.').map(int.tryParse).toList();
+  if (parts.length != 4 || parts.any((part) => part == null)) {
+    return false;
+  }
+  final first = parts[0]!;
+  final second = parts[1]!;
+  return first == 10 ||
+      (first == 172 && second >= 16 && second <= 31) ||
+      (first == 192 && second == 168);
+}
+
+Uri buildHealthProbeUri(String baseUrl, String source) {
+  return Uri.parse('$baseUrl/api/health').replace(
+    queryParameters: {
+      'source': source,
+      'ts': DateTime.now().millisecondsSinceEpoch.toString(),
+    },
+  );
+}
+
+Future<void> checkHealthWithDartHttpClient(String baseUrl) async {
+  if (kIsWeb) {
+    throw UnsupportedError('Dart HttpClient is not available on web');
+  }
+  final uri = buildHealthProbeUri(baseUrl, 'dart_http_client');
+  final client = HttpClient();
+  client.connectionTimeout = const Duration(seconds: 15);
+  if (_isLanOrLoopbackHost(uri.host)) {
+    client.findProxy = (_) => 'DIRECT';
+  }
+  try {
+    final request = await client.getUrl(uri);
+    final response = await request.close();
+    await response.drain<void>();
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException('HTTP ${response.statusCode}', uri: uri);
+    }
+  } finally {
+    client.close(force: true);
+  }
 }
 
 class ApiClient {
   ApiClient(this._dio);
 
   final Dio _dio;
+
+  Future<void> checkHealth() async {
+    await _dio
+        .getUri(buildHealthProbeUri(_dio.options.baseUrl, 'dio_flutter_app'));
+  }
 
   Future<LoginResult> login({
     required String username,
@@ -151,6 +308,24 @@ class ApiClient {
       );
     }
     final response = await _dio.post('/api/tasks', data: form);
+    return (response.data as Map<String, dynamic>)['job_id'] as String;
+  }
+
+  Future<QrInvoiceParseResult> parseInvoiceQr(String rawText) async {
+    final response = await _dio.post(
+      '/api/qr-invoices/parse',
+      data: {'raw_text': rawText},
+    );
+    return QrInvoiceParseResult.fromJson(
+      response.data as Map<String, dynamic>,
+    );
+  }
+
+  Future<String> verifyInvoiceQr(String rawText) async {
+    final response = await _dio.post(
+      '/api/qr-invoices/verify',
+      data: {'raw_text': rawText},
+    );
     return (response.data as Map<String, dynamic>)['job_id'] as String;
   }
 

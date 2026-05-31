@@ -36,6 +36,9 @@ class AppSettings:
     admin_password: str
     admin_password_generated: bool
     inline_jobs: bool
+    worker_concurrency: int
+    redis_url: str | None
+    qr_cache_ttl_seconds: int
     env_file_path: Path
     allowed_upload_extensions: tuple[str, ...] = (".pdf",)
     max_upload_files: int = 10
@@ -72,6 +75,9 @@ class AppSettings:
             admin_password=admin_password,
             admin_password_generated=admin_password_generated,
             inline_jobs=read("APP_INLINE_JOBS", "false").lower() in {"1", "true", "yes", "on"},
+            worker_concurrency=max(1, int(read("APP_WORKER_CONCURRENCY", "1"))),
+            redis_url=read("REDIS_URL", "").strip() or None,
+            qr_cache_ttl_seconds=int(read("QR_CACHE_TTL_SECONDS", str(30 * 24 * 60 * 60))),
             env_file_path=env_file,
         )
 

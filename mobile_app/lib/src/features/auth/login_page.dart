@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/network/api_client.dart';
 import '../../router.dart';
@@ -16,6 +17,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _submitting = false;
+  bool _checkingBackend = false;
 
   @override
   void dispose() {
@@ -28,9 +30,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
     final apiBaseUrl = ref.watch(apiBaseUrlProvider);
+    final endpointState = ref.watch(apiEndpointControllerProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isBusy = _submitting || authState.isLoading;
+    final isBusy = _submitting || _checkingBackend || authState.isLoading;
 
     return Scaffold(
       body: DecoratedBox(
@@ -223,11 +226,49 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                 ),
                                 const SizedBox(height: 10),
                                 Text(
-                                  'API：$apiBaseUrl',
+                                  'API：${endpointState.label} · $apiBaseUrl',
                                   textAlign: TextAlign.center,
                                   style: theme.textTheme.labelSmall?.copyWith(
                                     color: colorScheme.onSurfaceVariant,
                                   ),
+                                ),
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  onPressed: isBusy
+                                      ? null
+                                      : () => ref
+                                          .read(apiEndpointControllerProvider
+                                              .notifier)
+                                          .togglePreset(),
+                                  icon: const Icon(Icons.swap_horiz_rounded),
+                                  label: Text(
+                                    endpointState.isLocal ? '切换到服务器' : '切换到本地',
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                TextButton.icon(
+                                  onPressed: isBusy
+                                      ? null
+                                      : () => _checkBackend(context),
+                                  icon: _checkingBackend
+                                      ? const SizedBox.square(
+                                          dimension: 16,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        )
+                                      : const Icon(Icons.wifi_find_rounded),
+                                  label: Text(
+                                    _checkingBackend ? '正在检测后端' : '检测后端连接',
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  onPressed: isBusy
+                                      ? null
+                                      : () => _openHealthInBrowser(context),
+                                  icon:
+                                      const Icon(Icons.open_in_browser_rounded),
+                                  label: const Text('用 Safari 测试后端'),
                                 ),
                               ],
                             ),
@@ -261,6 +302,66 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     });
     if (success) {
       context.go('/tasks');
+    }
+  }
+
+  Future<void> _checkBackend(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final apiBaseUrl = ref.read(apiBaseUrlProvider);
+    setState(() {
+      _checkingBackend = true;
+    });
+    final results = <String>[];
+    try {
+      try {
+        await ref.read(rawApiClientProvider).checkHealth();
+        results.add('Dio：成功');
+      } catch (error) {
+        results.add('Dio：失败 $error');
+      }
+      try {
+        await checkHealthWithDartHttpClient(apiBaseUrl);
+        results.add('Dart HttpClient：成功');
+      } catch (error) {
+        results.add('Dart HttpClient：失败 $error');
+      }
+      if (!context.mounted) {
+        return;
+      }
+      final anySuccess = results.any((entry) => entry.contains('成功'));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            anySuccess
+                ? '后端连接诊断：$apiBaseUrl；${results.join('；')}'
+                : '后端连接失败：$apiBaseUrl；${results.join('；')}',
+          ),
+          duration: const Duration(seconds: 12),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _checkingBackend = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openHealthInBrowser(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final apiBaseUrl = ref.read(apiBaseUrlProvider);
+    final uri = Uri.parse('$apiBaseUrl/api/health').replace(
+      queryParameters: {
+        'source': 'safari_button',
+        'ts': DateTime.now().millisecondsSinceEpoch.toString(),
+      },
+    );
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!opened && context.mounted) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('无法打开浏览器：$uri')),
+      );
     }
   }
 }

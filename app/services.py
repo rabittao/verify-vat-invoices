@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -24,7 +25,9 @@ from sqlalchemy.orm import Session
 
 from app.config import AppSettings, load_local_env_file
 from app.database import session_scope, utcnow
+from app.invoice_qr import ParsedInvoiceQr, build_invoice_key, validate_parsed_invoice
 from app.models import Export, Invoice, SystemSetting, User, VerificationJob, VerificationJobItem
+from app.qr_cache import InvoiceInfoCache
 from app.schemas import Pagination
 from app.security import hash_password, verify_password
 
@@ -63,6 +66,9 @@ TASK_TIMELINE = [
     ("persisting", "入库中"),
     ("completed", "完成"),
 ]
+QR_INVOICE_SOURCE_TYPE = "qr_invoice"
+QR_INVOICE_SOURCE_FILE = "qr_invoice.json"
+QR_INVOICE_SOURCE_NAME = "扫码发票二维码"
 
 
 def now_iso() -> str:
@@ -154,6 +160,13 @@ def source_files_for_job(job: VerificationJob) -> list[dict[str, Any]]:
     return parse_json(job.source_files_json, [])
 
 
+def is_qr_invoice_job(job: VerificationJob) -> bool:
+    return any(
+        entry.get("source_type") == QR_INVOICE_SOURCE_TYPE
+        for entry in source_files_for_job(job)
+    )
+
+
 def source_file_lookup(job: VerificationJob) -> dict[str, dict[str, Any]]:
     files = source_files_for_job(job)
     return {entry["relative_path"]: entry for entry in files}
@@ -192,6 +205,14 @@ def get_job_delete_block_reason(session: Session, job: VerificationJob) -> str |
 def build_task_card(session: Session, job: VerificationJob) -> dict[str, Any]:
     files = source_files_for_job(job)
     delete_block_reason = get_job_delete_block_reason(session, job)
+    is_qr_job = any(entry.get("source_type") == QR_INVOICE_SOURCE_TYPE for entry in files)
+    display_title = (
+        f"扫码发票，{job.total_records}条记录"
+        if is_qr_job and job.total_records
+        else "扫码发票，等待核验"
+        if is_qr_job
+        else f"{len(files)}个PDF，{job.total_records}条记录"
+    )
     return {
         "job_id": job.job_uuid,
         "status": job.status,
@@ -205,7 +226,7 @@ def build_task_card(session: Session, job: VerificationJob) -> dict[str, Any]:
         "created_at": job.created_at,
         "updated_at": job.updated_at,
         "finished_at": job.finished_at,
-        "display_title": f"{len(files)}个PDF，{job.total_records}条记录",
+        "display_title": display_title,
         "source_files": [{"file_name": entry["original_name"]} for entry in files],
         "deletable": delete_block_reason is None,
         "delete_block_reason": delete_block_reason,
@@ -350,11 +371,106 @@ def create_job(
     return job
 
 
+def build_qr_extracted_record(parsed: ParsedInvoiceQr) -> dict[str, Any]:
+    validation_status, validation_errors = validate_parsed_invoice(parsed)
+    invoice_key = build_invoice_key(
+        parsed.invoice_code,
+        parsed.invoice_number,
+        parsed.invoice_date,
+        parsed.pretax_amount,
+    )
+    raw_digest = hashlib.sha1(parsed.raw_text.encode("utf-8")).hexdigest()[:16]
+    return {
+        "source_pdf": QR_INVOICE_SOURCE_FILE,
+        "page_number": 1,
+        "invoice_index": 1,
+        "invoice_type": parsed.invoice_type,
+        "invoice_code": parsed.invoice_code,
+        "invoice_number": parsed.invoice_number,
+        "invoice_date": parsed.invoice_date,
+        "pretax_amount": parsed.pretax_amount,
+        "tax_amount": parsed.tax_amount,
+        "total_amount": parsed.total_amount,
+        "seller_name": parsed.seller_name,
+        "buyer_name": parsed.buyer_name,
+        "check_code": parsed.check_code,
+        "extraction_status": "success" if validation_status == "pass" else "missing_fields",
+        "extraction_message": (
+            "parsed from invoice QR code"
+            if validation_status == "pass"
+            else "missing verification fields from invoice QR code"
+        ),
+        "extraction_method": "qr-code",
+        "result_screenshot": None,
+        "raw_text_excerpt": parsed.raw_text[:500],
+        "validation_status": validation_status,
+        "validation_errors": validation_errors,
+        "validation_warnings": [],
+        "record_id": f"qr_{raw_digest}",
+        "invoice_key": invoice_key,
+        "needs_verification": validation_status == "pass" and invoice_key is not None,
+    }
+
+
+def create_qr_invoice_job(
+    session: Session,
+    settings: AppSettings,
+    user: User,
+    parsed: ParsedInvoiceQr,
+) -> VerificationJob:
+    record = build_qr_extracted_record(parsed)
+    if record["validation_status"] != "pass" or not record["invoice_key"]:
+        errors = record.get("validation_errors") or ["二维码缺少核验所需字段"]
+        raise ValueError("；".join(errors))
+
+    job_uuid = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    uploads_dir = settings.uploads_dir / job_uuid
+    output_root = settings.jobs_dir / job_uuid
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    source_path = uploads_dir / QR_INVOICE_SOURCE_FILE
+    source_payload = {
+        "source_type": QR_INVOICE_SOURCE_TYPE,
+        "raw_text": parsed.raw_text,
+        "record": record,
+    }
+    source_path.write_text(
+        json.dumps(source_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    source_files = [
+        {
+            "file_id": "file_001",
+            "original_name": QR_INVOICE_SOURCE_NAME,
+            "relative_path": QR_INVOICE_SOURCE_FILE,
+            "stored_path": str(source_path),
+            "size_bytes": source_path.stat().st_size,
+            "source_type": QR_INVOICE_SOURCE_TYPE,
+        }
+    ]
+    job = VerificationJob(
+        job_uuid=job_uuid,
+        created_by_user_id=user.id,
+        source_files_json=json_text(source_files),
+        uploads_dir=str(uploads_dir),
+        output_root_path=str(output_root),
+        status="queued",
+        stage="uploaded",
+        progress_percent=0,
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
 def create_retry_job(session: Session, settings: AppSettings, user: User, original_job: VerificationJob, file_id: str) -> VerificationJob:
     source_files = source_files_for_job(original_job)
     selected = next((entry for entry in source_files if entry["file_id"] == file_id), None)
     if selected is None:
         raise ValueError("指定文件不存在")
+    if selected.get("source_type") == QR_INVOICE_SOURCE_TYPE:
+        raise ValueError("扫码发票任务不支持按文件重试，请重新扫码创建核验任务")
     content = Path(selected["stored_path"]).read_bytes()
     return create_job(
         session=session,
@@ -497,6 +613,72 @@ def execute_invoice_pipeline(
     return extracted_json, verified_json
 
 
+def execute_qr_invoice_pipeline(
+    settings: AppSettings,
+    env: dict[str, str],
+    job: VerificationJob,
+    output_root: Path,
+    on_stage_change: Callable[[str], None] | None = None,
+) -> tuple[Path, Path]:
+    source_files = source_files_for_job(job)
+    qr_source = next(
+        (entry for entry in source_files if entry.get("source_type") == QR_INVOICE_SOURCE_TYPE),
+        None,
+    )
+    if qr_source is None:
+        raise RuntimeError("扫码任务缺少二维码发票来源数据")
+
+    source_payload = json.loads(Path(qr_source["stored_path"]).read_text(encoding="utf-8"))
+    record = source_payload.get("record")
+    if not isinstance(record, dict):
+        raise RuntimeError("扫码任务来源数据格式错误")
+
+    scripts_dir = settings.root_dir / "scripts"
+    artifacts_root = output_root / "artifacts"
+    intermediate_dir = artifacts_root / "intermediate"
+    playwright_dir = artifacts_root / "playwright"
+    intermediate_dir.mkdir(parents=True, exist_ok=True)
+    playwright_dir.mkdir(parents=True, exist_ok=True)
+    extracted_json = intermediate_dir / "extracted.json"
+    verified_json = intermediate_dir / "verified.json"
+    pipeline_log = output_root / "pipeline.log"
+
+    extracted_json.write_text(
+        json.dumps(
+            {
+                "generated_at": now_iso(),
+                "source_type": QR_INVOICE_SOURCE_TYPE,
+                "records": [record],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    logger.info("QR pipeline wrote extracted payload: %s", extracted_json)
+    if on_stage_change is not None:
+        on_stage_change("verifying")
+
+    verify_cmd = [
+        "node",
+        str(scripts_dir / "verify_invoices.js"),
+        "--input-json",
+        str(extracted_json),
+        "--output-json",
+        str(verified_json),
+        "--artifacts-dir",
+        str(playwright_dir),
+    ]
+    verification = run_command(verify_cmd, cwd=settings.root_dir, env=env, log_path=pipeline_log, label="verify_invoices")
+    if verification.returncode != 0:
+        message = (verification.stderr or verification.stdout).strip() or "verification script failed"
+        logger.error("QR verification failed; writing fallback results: %s", _trim_output(message))
+        build_verification_fallback(extracted_json, verified_json, message)
+    else:
+        logger.info("QR verification completed: %s", verified_json)
+    return extracted_json, verified_json
+
+
 def determine_job_status(success_count: int, failed_count: int, skipped_count: int) -> str:
     if failed_count == 0 and skipped_count == 0:
         return "succeeded"
@@ -563,6 +745,28 @@ def upsert_invoice(session: Session, job: VerificationJob, item: VerificationJob
     existing.page_number = item.page_number
     existing.result_screenshot_path = item.verify_screenshot_path
     existing.last_verified_at = item.verified_at
+
+
+def build_invoice_info_cache_payload(job: VerificationJob, item: VerificationJobItem) -> dict[str, Any]:
+    return {
+        "invoice_key": item.invoice_key,
+        "invoice_type": item.invoice_type,
+        "invoice_code": item.invoice_code,
+        "invoice_number": item.invoice_number,
+        "invoice_date": item.invoice_date,
+        "pretax_amount": item.pretax_amount,
+        "tax_amount": item.tax_amount,
+        "total_amount": item.total_amount,
+        "seller_name": item.seller_name,
+        "buyer_name": item.buyer_name,
+        "check_code": item.check_code,
+        "verification_status": item.verification_status,
+        "verification_message": item.verification_message,
+        "verified_at": item.verified_at.isoformat() if item.verified_at else None,
+        "source_pdf": item.source_pdf,
+        "page_number": item.page_number,
+        "source_job_id": job.job_uuid,
+    }
 
 
 def _apply_invoice_from_item(invoice: Invoice, job: VerificationJob, item: VerificationJobItem) -> None:
@@ -632,7 +836,13 @@ def delete_completed_job(session: Session, job_uuid: str) -> None:
     session.delete(job)
 
 
-def persist_pipeline_results(session: Session, job: VerificationJob, extracted_json: Path, verified_json: Path) -> None:
+def persist_pipeline_results(
+    session: Session,
+    job: VerificationJob,
+    extracted_json: Path,
+    verified_json: Path,
+    settings: AppSettings | None = None,
+) -> None:
     logger.info("Persisting pipeline results: job=%s extracted=%s verified=%s", job.job_uuid, extracted_json, verified_json)
     lookup = source_file_lookup(job)
     extracted_payload = json.loads(extracted_json.read_text(encoding="utf-8"))
@@ -691,7 +901,7 @@ def persist_pipeline_results(session: Session, job: VerificationJob, extracted_j
             item.verification_amount_used = result.get("verification_amount_used")
             item.captcha_attempts = result.get("captcha_attempts")
             item.verified_at = parse_verified_timestamp(result.get("verified_at")) or utcnow()
-            item.verify_screenshot_path = result.get("result_screenshot")
+            item.verify_screenshot_path = prefer_modal_screenshot_path(result.get("result_screenshot"))
             item.result_text = result.get("result_text")
             item.raw_verified_json = json_text(result)
 
@@ -699,10 +909,20 @@ def persist_pipeline_results(session: Session, job: VerificationJob, extracted_j
     success_count = 0
     failed_count = 0
     skipped_count = 0
+    invoice_cache = (
+        InvoiceInfoCache(settings.redis_url, settings.qr_cache_ttl_seconds)
+        if settings is not None
+        else None
+    )
     for item in all_items:
         if item.verification_status == "success":
             success_count += 1
             upsert_invoice(session, job, item)
+            if invoice_cache is not None and item.invoice_key:
+                invoice_cache.set(
+                    item.invoice_key,
+                    build_invoice_info_cache_payload(job, item),
+                )
         elif item.verification_status in {
             "data_mismatch",
             "captcha_error",
@@ -740,10 +960,11 @@ def process_job(job_uuid: str, session_factory, settings: AppSettings) -> None:
         job = session.scalar(select(VerificationJob).where(VerificationJob.job_uuid == job_uuid))
         if job is None:
             raise ValueError("job not found")
-        set_job_state(session, job, status="running", stage="extracting")
+        initial_stage = "verifying" if is_qr_invoice_job(job) else "extracting"
+        set_job_state(session, job, status="running", stage=initial_stage)
         if job.started_at is None:
             job.started_at = utcnow()
-        logger.info("Job stage changed: job=%s stage=extracting progress=%s", job_uuid, job.progress_percent)
+        logger.info("Job stage changed: job=%s stage=%s progress=%s", job_uuid, initial_stage, job.progress_percent)
 
     try:
         def update_stage(stage: str) -> None:
@@ -759,7 +980,15 @@ def process_job(job_uuid: str, session_factory, settings: AppSettings) -> None:
             env = build_pipeline_env(session, settings)
             uploads_dir = Path(job.uploads_dir)
             output_root = Path(job.output_root_path)
-            if "on_stage_change" in signature(execute_invoice_pipeline).parameters:
+            if is_qr_invoice_job(job):
+                extracted_json, verified_json = execute_qr_invoice_pipeline(
+                    settings,
+                    env,
+                    job,
+                    output_root,
+                    on_stage_change=update_stage,
+                )
+            elif "on_stage_change" in signature(execute_invoice_pipeline).parameters:
                 extracted_json, verified_json = execute_invoice_pipeline(
                     settings,
                     env,
@@ -771,7 +1000,7 @@ def process_job(job_uuid: str, session_factory, settings: AppSettings) -> None:
                 extracted_json, verified_json = execute_invoice_pipeline(settings, env, uploads_dir, output_root)
             set_job_state(session, job, status="running", stage="persisting")
             logger.info("Job stage changed: job=%s stage=persisting progress=%s", job_uuid, job.progress_percent)
-            persist_pipeline_results(session, job, extracted_json, verified_json)
+            persist_pipeline_results(session, job, extracted_json, verified_json, settings)
             logger.info("Job processing finished: %s", job_uuid)
     except Exception as exc:
         logger.exception("Job processing failed: %s", job_uuid)
@@ -836,7 +1065,7 @@ def get_job_detail(session: Session, job_uuid: str) -> dict[str, Any]:
             "success_count": 0,
             "failed_count": 0,
             "skipped_count": 0,
-            "retryable": True,
+            "retryable": entry.get("source_type") != QR_INVOICE_SOURCE_TYPE,
             "items": [],
         }
         for entry in files
@@ -1299,3 +1528,14 @@ def safe_resolve_path(path_value: str | None, base_dir: Path) -> Path:
     if not resolved.exists():
         raise FileNotFoundError("file does not exist")
     return resolved
+
+
+def prefer_modal_screenshot_path(path_value: str | None) -> str | None:
+    if not path_value:
+        return path_value
+    path = Path(path_value)
+    if path.name.endswith("-result.png"):
+        modal_path = path.with_name(path.name.removesuffix("-result.png") + "-modal.png")
+        if modal_path.exists():
+            return str(modal_path)
+    return path_value

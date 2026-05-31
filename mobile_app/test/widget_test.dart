@@ -2,6 +2,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:verify_vat_invoices_app/src/app.dart';
 import 'package:verify_vat_invoices_app/src/core/models/app_state_models.dart';
@@ -10,6 +12,8 @@ import 'package:verify_vat_invoices_app/src/features/tasks/task_list_page.dart';
 
 class _FakeApiClient extends ApiClient {
   _FakeApiClient() : super(Dio());
+
+  String? verifiedQrText;
 
   @override
   Future<TaskListState> getTasks({
@@ -49,6 +53,34 @@ class _FakeApiClient extends ApiClient {
       ),
       errorMessage: null,
     );
+  }
+
+  @override
+  Future<QrInvoiceParseResult> parseInvoiceQr(String rawText) async {
+    return const QrInvoiceParseResult(
+      invoiceType: '数电票/全电发票',
+      invoiceCode: null,
+      invoiceNumber: '26317000001011694315',
+      invoiceDate: '2026-03-28',
+      pretaxAmount: '330.19',
+      taxAmount: null,
+      totalAmount: null,
+      sellerName: null,
+      buyerName: null,
+      checkCode: null,
+      invoiceKey: '|26317000001011694315|2026-03-28|330.19',
+      confidence: 'high',
+      parseMessage: '二维码解析成功',
+      validationStatus: 'pass',
+      validationErrors: [],
+      cacheHit: true,
+    );
+  }
+
+  @override
+  Future<String> verifyInvoiceQr(String rawText) async {
+    verifiedQrText = rawText;
+    return 'job-from-qr';
   }
 }
 
@@ -113,6 +145,10 @@ class _PagedFakeApiClient extends ApiClient {
 }
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
   test('api base url supports dart define override', () {
     final container = ProviderContainer();
     addTearDown(container.dispose);
@@ -131,6 +167,15 @@ void main() {
     } else {
       expect(baseUrl, startsWith('http'));
     }
+  });
+
+  test('api endpoint can switch to local backend', () async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    await container.read(apiEndpointControllerProvider.notifier).useLocal();
+
+    expect(container.read(apiBaseUrlProvider), localApiBaseUrl);
   });
 
   testWidgets('app renders redesigned login page', (tester) async {
@@ -166,6 +211,71 @@ void main() {
     expect(find.text('进行中任务'), findsOneWidget);
     expect(find.text('上传发票'), findsOneWidget);
     expect(find.textContaining('共 1 个历史任务'), findsOneWidget);
+  });
+
+  testWidgets('task list qr upload dialog keeps only close and verify actions',
+      (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(_FakeApiClient()),
+        ],
+        child: const MaterialApp(home: TaskListPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('扫码上传'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('扫码上传发票信息'), findsOneWidget);
+    expect(find.text('关闭'), findsOneWidget);
+    expect(find.text('确认核验'), findsOneWidget);
+    expect(find.text('解析二维码'), findsNothing);
+  });
+
+  testWidgets('task list qr upload dialog creates verification task',
+      (tester) async {
+    final apiClient = _FakeApiClient();
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => const TaskListPage(),
+        ),
+        GoRoute(
+          path: '/tasks/:jobId',
+          builder: (context, state) =>
+              Text('任务详情 ${state.pathParameters['jobId']}'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(apiClient),
+        ],
+        child: MaterialApp.router(routerConfig: router),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('扫码上传'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextField).last,
+      '01,20,26317000001011694315,20260328,330.19',
+    );
+    await tester.tap(find.text('确认核验'));
+    await tester.pumpAndSettle();
+
+    expect(
+      apiClient.verifiedQrText,
+      '01,20,26317000001011694315,20260328,330.19',
+    );
+    expect(find.text('任务详情 job-from-qr'), findsOneWidget);
   });
 
   testWidgets('task list loads more completed task pages', (tester) async {

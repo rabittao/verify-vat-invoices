@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import date
+import logging
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
@@ -11,8 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.config import AppSettings, get_settings
 from app.database import build_session_factory, init_database, session_scope
+from app.invoice_qr import build_invoice_key, parse_invoice_qr, validate_parsed_invoice
 from app.logging_config import configure_logging
 from app.models import Export, Invoice, User, VerificationJob, VerificationJobItem
+from app.qr_cache import QrInvoiceCache
 from app.schemas import (
     ApiMessage,
     ConfigValidationItem,
@@ -25,6 +28,8 @@ from app.schemas import (
     LedgerListResponse,
     LoginRequest,
     LoginResponse,
+    QrInvoiceParseRequest,
+    QrInvoiceParseResponse,
     RetryFileResponse,
     SystemConfigResponse,
     TaskDetailResponse,
@@ -39,6 +44,7 @@ from app.services import (
     authenticate_user,
     create_export,
     create_job,
+    create_qr_invoice_job,
     create_retry_job,
     delete_completed_job,
     ensure_admin_user,
@@ -49,11 +55,14 @@ from app.services import (
     list_exports,
     list_invoices,
     list_jobs,
+    prefer_modal_screenshot_path,
     safe_resolve_path,
     update_system_config,
     validate_system_config,
 )
 from app.worker import WorkerManager
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -71,6 +80,10 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         ensure_admin_user(session, resolved_settings)
 
     worker = WorkerManager(session_factory, resolved_settings)
+    qr_cache = QrInvoiceCache(
+        resolved_settings.redis_url,
+        resolved_settings.qr_cache_ttl_seconds,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -82,6 +95,19 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
     app.state.session_factory = session_factory
     app.state.worker = worker
+    app.state.qr_cache = qr_cache
+
+    @app.middleware("http")
+    async def log_diagnostic_request(request, call_next):
+        if request.url.path == "/api/health":
+            logger.info(
+                "Health probe received: client=%s path=%s query=%s user_agent=%s",
+                request.client.host if request.client else "-",
+                request.url.path,
+                request.url.query or "-",
+                request.headers.get("user-agent", "-"),
+            )
+        return await call_next(request)
 
     def get_db():
         session = session_factory()
@@ -130,6 +156,84 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 display_name=user.display_name,
                 role=user.role,
             ),
+        )
+
+    @app.post("/api/qr-invoices/parse", response_model=QrInvoiceParseResponse)
+    def parse_qr_invoice(
+        payload: QrInvoiceParseRequest,
+        user: User = Depends(resolve_current_user),
+    ) -> QrInvoiceParseResponse:
+        _ = user
+        cached = qr_cache.get(payload.raw_text)
+        if cached is not None:
+            cached["cache_hit"] = True
+            return QrInvoiceParseResponse(**cached)
+
+        parsed = parse_invoice_qr(payload.raw_text)
+        invoice_key = build_invoice_key(
+            parsed.invoice_code,
+            parsed.invoice_number,
+            parsed.invoice_date,
+            parsed.pretax_amount,
+        )
+        validation_status, validation_errors = validate_parsed_invoice(parsed)
+        response = QrInvoiceParseResponse(
+            invoice_type=parsed.invoice_type,
+            invoice_code=parsed.invoice_code,
+            invoice_number=parsed.invoice_number,
+            invoice_date=parsed.invoice_date,
+            pretax_amount=parsed.pretax_amount,
+            tax_amount=parsed.tax_amount,
+            total_amount=parsed.total_amount,
+            seller_name=parsed.seller_name,
+            buyer_name=parsed.buyer_name,
+            check_code=parsed.check_code,
+            invoice_key=invoice_key,
+            confidence=parsed.confidence,
+            parse_message=parsed.parse_message,
+            validation_status=validation_status,
+            validation_errors=validation_errors,
+            cache_hit=False,
+        )
+        if validation_status == "pass":
+            if hasattr(response, "model_dump"):
+                cache_payload = response.model_dump(mode="json")
+            else:
+                cache_payload = response.dict()
+            qr_cache.set(payload.raw_text, cache_payload)
+        return response
+
+    @app.post("/api/qr-invoices/verify", response_model=CreateTaskResponse)
+    def verify_qr_invoice(
+        payload: QrInvoiceParseRequest,
+        user: User = Depends(resolve_current_user),
+        db: Session = Depends(get_db),
+    ) -> CreateTaskResponse:
+        parsed = parse_invoice_qr(payload.raw_text)
+        validation_status, validation_errors = validate_parsed_invoice(parsed)
+        if validation_status != "pass":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "二维码缺少核验所需字段",
+                    "validation_errors": validation_errors,
+                },
+            )
+
+        try:
+            job = create_qr_invoice_job(db, resolved_settings, user, parsed)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        db.commit()
+        db.refresh(job)
+        worker.enqueue_job(job.job_uuid)
+        return CreateTaskResponse(
+            job_id=job.job_uuid,
+            status=job.status,
+            stage=job.stage,
+            progress_percent=job.progress_percent,
+            source_file_count=1,
+            created_at=job.created_at,
         )
 
     @app.get("/api/tasks", response_model=TaskListResponse)
@@ -341,7 +445,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="记录不存在")
         try:
-            path = safe_resolve_path(item.verify_screenshot_path, resolved_settings.data_dir)
+            path = safe_resolve_path(prefer_modal_screenshot_path(item.verify_screenshot_path), resolved_settings.data_dir)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return FileResponse(path)
@@ -353,7 +457,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         if invoice is None:
             raise HTTPException(status_code=404, detail="记录不存在")
         try:
-            path = safe_resolve_path(invoice.result_screenshot_path, resolved_settings.data_dir)
+            path = safe_resolve_path(prefer_modal_screenshot_path(invoice.result_screenshot_path), resolved_settings.data_dir)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return FileResponse(path)

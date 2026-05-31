@@ -30,7 +30,13 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>用于扫描发票二维码并提取发票信息。</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于连接同一局域网内的本机后端服务进行调试。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

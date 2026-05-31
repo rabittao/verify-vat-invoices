@@ -20,9 +20,10 @@ class WorkerManager:
         self.session_factory = session_factory
         self.settings = settings
         self.inline = settings.inline_jobs
+        self.worker_concurrency = max(1, settings.worker_concurrency)
         self._queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._threads: list[threading.Thread] = []
         self._queued_jobs: set[str] = set()
         self._lock = threading.Lock()
 
@@ -30,24 +31,31 @@ class WorkerManager:
         if self.inline:
             logger.info("Worker inline mode enabled; jobs will run in request thread")
             return
-        if self._thread is not None and self._thread.is_alive():
+        if self._threads and all(thread.is_alive() for thread in self._threads):
             return
-        self._thread = None
+        self._threads = []
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, name="invoice-worker", daemon=True)
-        self._thread.start()
-        logger.info("Worker thread started")
+        for index in range(self.worker_concurrency):
+            thread = threading.Thread(
+                target=self._run,
+                name=f"invoice-worker-{index + 1}",
+                daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
+        logger.info("Worker threads started: %s", self.worker_concurrency)
         self._enqueue_unfinished_jobs()
 
     def stop(self) -> None:
         if self.inline:
             return
         self._stop_event.set()
-        self._queue.put(("stop", ""))
+        for _ in self._threads or [None]:
+            self._queue.put(("stop", ""))
         logger.info("Worker stop requested")
-        if self._thread is not None:
-            self._thread.join(timeout=3)
-            self._thread = None
+        for thread in self._threads:
+            thread.join(timeout=3)
+        self._threads = []
 
     def enqueue_job(self, job_uuid: str) -> bool:
         if self.inline:

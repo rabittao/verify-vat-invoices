@@ -4,6 +4,7 @@ openpyxl>=3.1.5
 PyMuPDF>=1.24.0
 python-multipart>=0.0.9
 pytest>=8.3.0
+redis>=5.0.0
 reportlab>=4.2.0
 sqlalchemy>=2.0.36
 uvicorn>=0.32.0

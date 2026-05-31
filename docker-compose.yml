@@ -10,13 +10,34 @@ services:
     environment:
       APP_DATA_DIR: /app/app_data
       APP_DATABASE_URL: sqlite:////app/app_data/app.db
+      APP_WORKER_CONCURRENCY: ${APP_WORKER_CONCURRENCY:-1}
+      REDIS_URL: redis://redis:6379/0
+      QR_CACHE_TTL_SECONDS: 2592000
     ports:
       - "8000:8000"
     volumes:
       - ./app_data:/app/app_data
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:
