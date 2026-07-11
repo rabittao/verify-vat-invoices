@@ -4,6 +4,7 @@
   "type": "commonjs",
   "scripts": {
     "api": "uvicorn app.main:app --reload",
+    "install:browsers": "playwright install chromium",
     "extract": "python3 scripts/extract_invoices.py",
     "pipeline": "python3 scripts/run_pipeline.py",
     "test": "pytest -q",

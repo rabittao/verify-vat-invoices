@@ -7,6 +7,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/models/app_state_models.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_layout.dart';
+import '../../core/theme/app_palette.dart';
 
 final taskDetailProvider = FutureProvider.autoDispose
     .family<TaskDetailModel, String>((ref, jobId) async {
@@ -39,9 +41,6 @@ final taskItemEvidenceProvider = FutureProvider.autoDispose
   );
 });
 
-final taskDetailTabProvider =
-    StateProvider.autoDispose.family<int, String>((ref, jobId) => 0);
-
 class TaskDetailPage extends ConsumerWidget {
   const TaskDetailPage({
     required this.jobId,
@@ -60,7 +59,7 @@ class TaskDetailPage extends ConsumerWidget {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        titleSpacing: 20,
+        centerTitle: true,
         title: Text(
           '任务详情',
           style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -68,85 +67,436 @@ class TaskDetailPage extends ConsumerWidget {
                 color: _TaskWorkbenchPalette.ink,
               ),
         ),
+        leading: IconButton(
+          tooltip: '返回',
+          onPressed: () => context.go('/tasks'),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+        ),
         actions: [
           IconButton(
             tooltip: '刷新任务详情',
             onPressed: () => ref.refresh(taskDetailProvider(jobId).future),
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(Icons.more_horiz_rounded),
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: RefreshIndicator(
-        color: _TaskWorkbenchPalette.brand,
-        backgroundColor: Colors.white,
-        onRefresh: () async => ref.refresh(taskDetailProvider(jobId).future),
-        child: task.when(
-          loading: () => const _TaskMessageView(
-            title: '正在拉取任务进度',
-            message: '系统正在同步最新的核验状态与文件结果。',
-            showSpinner: true,
-          ),
-          error: (error, _) => _TaskMessageView(
-            title: '任务详情加载失败',
-            message: '$error',
-            action: FilledButton.tonalIcon(
-              onPressed: () => ref.refresh(taskDetailProvider(jobId).future),
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重新加载'),
+      body: DecoratedBox(
+        decoration: const BoxDecoration(gradient: AppPalette.pageGradient),
+        child: RefreshIndicator(
+          color: _TaskWorkbenchPalette.brand,
+          backgroundColor: Colors.white,
+          onRefresh: () async => ref.refresh(taskDetailProvider(jobId).future),
+          child: task.when(
+            loading: () => const _TaskMessageView(
+              title: '正在拉取任务进度',
+              message: '系统正在同步最新的核验状态与文件结果。',
+              showSpinner: true,
             ),
-          ),
-          data: (detail) {
-            final currentTab = ref.watch(taskDetailTabProvider(jobId));
-            final resultItems = [
-              for (final group in detail.fileGroups)
-                for (final item in group.items) (group.fileName, item),
-            ];
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              children: [
-                _TaskOverviewHero(detail: detail),
-                const SizedBox(height: 12),
-                _TaskSummaryPanel(detail: detail),
-                const SizedBox(height: 12),
-                _TaskSegmentTabs(
-                  index: currentTab,
-                  onChanged: (value) =>
-                      ref.read(taskDetailTabProvider(jobId).notifier).state =
-                          value,
+            error: (error, _) => _TaskMessageView(
+              title: '任务详情加载失败',
+              message: '$error',
+              action: FilledButton.tonalIcon(
+                onPressed: () => ref.refresh(taskDetailProvider(jobId).future),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('重新加载'),
+              ),
+            ),
+            data: (detail) {
+              final resultItems = [
+                for (final group in detail.fileGroups)
+                  for (final item in group.items) (group.fileName, item),
+              ];
+              return LayoutBuilder(
+                builder: (context, constraints) => ListView(
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
+                  ),
+                  padding: AppLayout.pageInsets(
+                    constraints.maxWidth,
+                    top: 8,
+                    bottom: 36,
+                  ),
+                  children: [
+                    _TaskDetailDashboard(
+                      detail: detail,
+                      jobId: jobId,
+                      items: resultItems,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                if (currentTab == 0) ...[
-                  if (detail.fileGroups.isEmpty)
-                    const _EmptyGroupCard()
-                  else
-                    ...detail.fileGroups.map(
-                      (group) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _FileGroupCard(jobId: jobId, group: group),
-                      ),
-                    ),
-                ] else ...[
-                  if (resultItems.isEmpty)
-                    const _EmptyGroupCard()
-                  else
-                    ...resultItems.map(
-                      (entry) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _ResultItemCard(
-                          jobId: jobId,
-                          fileName: entry.$1,
-                          item: entry.$2,
-                        ),
-                      ),
-                    ),
-                ],
-              ],
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _TaskDetailDashboard extends StatelessWidget {
+  const _TaskDetailDashboard({
+    required this.detail,
+    required this.jobId,
+    required this.items,
+  });
+
+  final TaskDetailModel detail;
+  final String jobId;
+  final List<(String, TaskItemModel)> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final overviewColumn = Column(
+      children: [
+        _TaskOverviewHero(detail: detail),
+        const SizedBox(height: 12),
+        _TaskSummaryPanel(detail: detail),
+      ],
+    );
+    final resultColumn = Column(
+      children: [
+        if (detail.isQrInvoiceJob) ...[
+          _LatestResultSection(
+            jobId: jobId,
+            items: items,
+            screenshotOnly: true,
+          ),
+          const SizedBox(height: 12),
+        ],
+        const _TaskDetailSectionTitle(
+          title: '文件明细',
+          actionLabel: '按文件查看',
+        ),
+        const SizedBox(height: 10),
+        if (detail.fileGroups.isEmpty)
+          const _EmptyGroupCard()
+        else
+          _TaskFileGroupsGrid(
+            jobId: jobId,
+            groups: detail.fileGroups,
+          ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 820) {
+          return Column(
+            children: [
+              overviewColumn,
+              const SizedBox(height: 12),
+              resultColumn,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 5, child: overviewColumn),
+            const SizedBox(width: 16),
+            Expanded(flex: 6, child: resultColumn),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _LatestResultSection extends StatelessWidget {
+  const _LatestResultSection({
+    required this.jobId,
+    required this.items,
+    this.screenshotOnly = false,
+  });
+
+  final String jobId;
+  final List<(String, TaskItemModel)> items;
+  final bool screenshotOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final latest = items.isEmpty ? null : items.first;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      decoration: AppPalette.softCardDecoration(radius: 22, shadowAlpha: 0.26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _TaskDetailSectionTitle(
+            title: '最新处理结果',
+            actionLabel: '最近 1 条',
+            compact: true,
+          ),
+          const SizedBox(height: 12),
+          if (latest == null)
+            const _EmptyChildState(message: '暂无处理结果，完成后会展示最新发票记录。')
+          else
+            _LatestResultCard(
+              jobId: jobId,
+              fileName: latest.$1,
+              item: latest.$2,
+              screenshotOnly: screenshotOnly,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskDetailSectionTitle extends StatelessWidget {
+  const _TaskDetailSectionTitle({
+    required this.title,
+    required this.actionLabel,
+    this.compact = false,
+  });
+
+  final String title;
+  final String actionLabel;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: _TaskWorkbenchPalette.ink,
+                  fontSize: compact ? 15 : 16,
+                  fontWeight: FontWeight.w900,
+                ),
+          ),
+        ),
+        Text(
+          actionLabel,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: AppPalette.primary,
+                fontWeight: FontWeight.w800,
+              ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LatestResultCard extends StatelessWidget {
+  const _LatestResultCard({
+    required this.jobId,
+    required this.fileName,
+    required this.item,
+    this.screenshotOnly = false,
+  });
+
+  final String jobId;
+  final String fileName;
+  final TaskItemModel item;
+  final bool screenshotOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusStyle = _statusStyleForItem(item.statusLabel);
+    final amountText =
+        item.amount == null || item.amount!.isEmpty ? '¥-' : '¥${item.amount}';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppPalette.cardSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _TaskWorkbenchPalette.outline),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: statusStyle.color,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        item.invoiceNumber?.isNotEmpty == true
+                            ? item.invoiceNumber!
+                            : fileName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              color: _TaskWorkbenchPalette.ink,
+                              fontWeight: FontWeight.w900,
+                            ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                _ResultMetaText('开票日期', item.invoiceDate ?? '-'),
+                const SizedBox(height: 4),
+                _ResultMetaText('金额', amountText),
+                const SizedBox(height: 4),
+                _ResultMetaText('状态', statusStyle.label),
+                if (item.failureSummary?.isNotEmpty == true) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    item.failureSummary!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TaskWorkbenchPalette.dangerInk,
+                        ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            children: [
+              _TaskItemThumb(jobId: jobId, jobItemId: item.jobItemId),
+              const SizedBox(height: 10),
+              if (!screenshotOnly) ...[
+                _LatestResultActionButton(
+                  label: '详情',
+                  icon: Icons.article_outlined,
+                  filled: false,
+                  onPressed: () => _openEvidenceSheet(context),
+                ),
+                const SizedBox(height: 8),
+              ],
+              _LatestResultActionButton(
+                label: '截图',
+                icon: Icons.image_outlined,
+                filled: true,
+                onPressed: () => _openEvidenceSheet(context),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openEvidenceSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.92,
+        child: _TaskItemEvidenceSheet(
+          jobId: jobId,
+          jobItemId: item.jobItemId,
+        ),
+      ),
+    );
+  }
+}
+
+class _LatestResultActionButton extends StatelessWidget {
+  const _LatestResultActionButton({
+    required this.label,
+    required this.icon,
+    required this.filled,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool filled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = filled
+        ? FilledButton.styleFrom(
+            backgroundColor: AppPalette.primary,
+            foregroundColor: Colors.white,
+            side: BorderSide.none,
+          )
+        : OutlinedButton.styleFrom(
+            foregroundColor: AppPalette.primaryDeep,
+            backgroundColor: Colors.white,
+            side: const BorderSide(color: AppPalette.lineSoft),
+          );
+    return SizedBox(
+      width: 76,
+      height: 36,
+      child: filled
+          ? FilledButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon, size: 14),
+              label: Text(label),
+              style: style.copyWith(
+                padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+                shape: WidgetStatePropertyAll(
+                  RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                textStyle: const WidgetStatePropertyAll(
+                  TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+                ),
+              ),
+            )
+          : OutlinedButton.icon(
+              onPressed: onPressed,
+              icon: Icon(icon, size: 14),
+              label: Text(label),
+              style: style.copyWith(
+                padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+                shape: WidgetStatePropertyAll(
+                  RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                textStyle: const WidgetStatePropertyAll(
+                  TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _TaskFileGroupsGrid extends StatelessWidget {
+  const _TaskFileGroupsGrid({
+    required this.jobId,
+    required this.groups,
+  });
+
+  final String jobId;
+  final List<FileGroupModel> groups;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 12.0;
+        final columns = constraints.maxWidth >= 980 ? 2 : 1;
+        final width =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final group in groups)
+              SizedBox(
+                width: width,
+                child: _FileGroupCard(jobId: jobId, group: group),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -162,53 +512,189 @@ class _TaskOverviewHero extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: _TaskWorkbenchPalette.outline),
+        boxShadow: AppPalette.softShadow(0.36),
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        detail.fileGroups.isNotEmpty
-                            ? detail.fileGroups.first.fileName
-                            : '批量发票任务',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                              color: _TaskWorkbenchPalette.ink,
-                              fontWeight: FontWeight.w800,
-                            ),
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: AppPalette.primary,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.description_rounded,
+                          color: Colors.white,
+                          size: 18,
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '任务编号   ${detail.jobId}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: _TaskWorkbenchPalette.subtleInk,
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '任务编号',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color:
+                                              _TaskWorkbenchPalette.subtleInk,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                  ),
+                                ),
+                                _StatusPill(style: statusStyle),
+                              ],
                             ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '开始时间   ${detail.createdAtText}',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: _TaskWorkbenchPalette.subtleInk,
+                            const SizedBox(height: 4),
+                            Text(
+                              detail.jobId,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(
+                                    color: _TaskWorkbenchPalette.ink,
+                                    fontSize: 16,
+                                    height: 1.18,
+                                    letterSpacing: -0.35,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                             ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-                _StatusPill(style: statusStyle, compact: false),
-              ],
+                  const SizedBox(height: 12),
+                  Text(
+                    '开始时间：${detail.createdAtText}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TaskWorkbenchPalette.subtleInk,
+                        ),
+                  ),
+                  Text(
+                    '当前阶段：${detail.stageLabel}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: _TaskWorkbenchPalette.subtleInk,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 14),
+            Container(
+              width: 76,
+              height: 76,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppPalette.skySoft,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: _TaskProgressRing(
+                progressPercent: detail.progressPercent,
+                isFinished: detail.isFinished,
+              ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _TaskProgressRing extends StatelessWidget {
+  const _TaskProgressRing({
+    required this.progressPercent,
+    required this.isFinished,
+  });
+
+  final int progressPercent;
+  final bool isFinished;
+
+  @override
+  Widget build(BuildContext context) {
+    final progressValue = isFinished
+        ? 1.0
+        : progressPercent <= 0
+            ? null
+            : (progressPercent / 100).clamp(0.0, 1.0);
+    return SizedBox.square(
+      dimension: 66,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          const SizedBox.square(
+            dimension: 50,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppPalette.skySoft,
+              ),
+            ),
+          ),
+          SizedBox.square(
+            dimension: 60,
+            child: CircularProgressIndicator(
+              strokeWidth: 4.5,
+              value: progressValue,
+              strokeCap: StrokeCap.round,
+              backgroundColor: AppPalette.progressTrack,
+              color: AppPalette.primary,
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 42,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '$progressPercent%',
+                    maxLines: 1,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: AppPalette.primary,
+                          fontSize: 15,
+                          height: 0.95,
+                          letterSpacing: -0.8,
+                          fontWeight: FontWeight.w900,
+                        ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '总进度',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: AppPalette.muted,
+                      fontSize: 8,
+                      height: 1,
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -221,159 +707,221 @@ class _TaskSummaryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _TaskWorkbenchPalette.outline),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      children: [
+        Row(
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '当前阶段   ${detail.stageLabel}',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: _TaskWorkbenchPalette.ink,
-                        ),
-                  ),
-                ),
-                Text(
-                  '${detail.progressPercent}%',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: _TaskWorkbenchPalette.brand,
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 8,
-                value: detail.isFinished
-                    ? 1
-                    : detail.progressPercent <= 0
-                        ? null
-                        : detail.progressPercent / 100,
-                backgroundColor: _TaskWorkbenchPalette.track,
-                color: _TaskWorkbenchPalette.brand,
+            Expanded(
+              child: _TaskMetricTile(
+                label: '总记录',
+                value: '${detail.totalRecords}',
+                icon: Icons.list_alt_rounded,
               ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _SummaryInlineMetric(label: '总记录', value: '${detail.totalRecords} 条')),
-                Expanded(child: _SummaryInlineMetric(label: '成功', value: '${detail.successCount}', success: true)),
-                Expanded(child: _SummaryInlineMetric(label: '失败', value: '${detail.failedCount}', error: true)),
-                Expanded(child: _SummaryInlineMetric(label: '跳过', value: '${detail.skippedCount}')),
-              ],
+            const SizedBox(width: 8),
+            Expanded(
+              child: _TaskMetricTile(
+                label: '成功',
+                value: '${detail.successCount}',
+                icon: Icons.check_box_rounded,
+                tone: AppPalette.success,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _TaskMetricTile(
+                label: '失败',
+                value: '${detail.failedCount}',
+                icon: Icons.error_rounded,
+                tone: AppPalette.danger,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _TaskMetricTile(
+                label: '跳过',
+                value: '${detail.skippedCount}',
+                icon: Icons.redo_rounded,
+                tone: const Color(0xFF42607A),
+              ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          decoration:
+              AppPalette.softCardDecoration(radius: 22, shadowAlpha: 0.22),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  _StepDot(
+                    label: '上传',
+                    time: '14:25',
+                    done: detail.progressPercent >= 5,
+                  ),
+                  const Expanded(child: _StepLine(active: true)),
+                  _StepDot(
+                    label: '抽取',
+                    time: '14:26',
+                    done: detail.progressPercent >= 35,
+                  ),
+                  Expanded(
+                    child: _StepLine(active: detail.progressPercent >= 35),
+                  ),
+                  _StepDot(
+                    label: '核验中',
+                    time: '${detail.progressPercent}%',
+                    done: detail.progressPercent >= 85,
+                    current: !detail.isFinished,
+                  ),
+                  Expanded(
+                    child: _StepLine(active: detail.isFinished),
+                  ),
+                  _StepDot(
+                    label: '入库',
+                    time: detail.isFinished ? '完成' : '待开始',
+                    done: detail.isFinished,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _TaskSegmentTabs extends StatelessWidget {
-  const _TaskSegmentTabs({
-    required this.index,
-    required this.onChanged,
+class _TaskMetricTile extends StatelessWidget {
+  const _TaskMetricTile({
+    required this.label,
+    required this.value,
+    required this.icon,
+    this.tone = AppPalette.primaryDeep,
   });
 
-  final int index;
-  final ValueChanged<int> onChanged;
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color tone;
 
   @override
   Widget build(BuildContext context) {
-    Widget tab(int value, String label) {
-      final selected = index == value;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onChanged(value),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: selected ? Colors.white : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: selected
-                    ? _TaskWorkbenchPalette.brand
-                    : _TaskWorkbenchPalette.subtleInk,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF1F4EF),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _TaskWorkbenchPalette.outline),
-      ),
-      child: Row(
+      height: 82,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: AppPalette.softCardDecoration(radius: 16, shadowAlpha: 0.16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          tab(0, '按文件查看'),
-          tab(1, '按结果查看'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: tone, size: 14),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: AppPalette.muted,
+                        fontWeight: FontWeight.w800,
+                      ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: tone,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.5,
+                ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _SummaryInlineMetric extends StatelessWidget {
-  const _SummaryInlineMetric({
+class _StepDot extends StatelessWidget {
+  const _StepDot({
     required this.label,
-    required this.value,
-    this.success = false,
-    this.error = false,
+    required this.time,
+    this.done = false,
+    this.current = false,
   });
 
   final String label;
-  final String value;
-  final bool success;
-  final bool error;
+  final String time;
+  final bool done;
+  final bool current;
 
   @override
   Widget build(BuildContext context) {
-    final color = error
-        ? _TaskWorkbenchPalette.dangerInk
-        : success
-            ? _TaskWorkbenchPalette.success
-            : _TaskWorkbenchPalette.ink;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _TaskWorkbenchPalette.subtleInk,
-              ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: color,
-              ),
-        ),
-      ],
+    final color = done || current ? AppPalette.primary : AppPalette.muted;
+    return SizedBox(
+      width: 52,
+      child: Column(
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: done ? AppPalette.primary : AppPalette.skySoft,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppPalette.primary),
+            ),
+            child: Icon(
+              done
+                  ? Icons.check_rounded
+                  : current
+                      ? Icons.refresh_rounded
+                      : Icons.north_east_rounded,
+              color: done ? Colors.white : AppPalette.primary,
+              size: 15,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          Text(
+            time,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppPalette.muted,
+                  fontSize: 10,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StepLine extends StatelessWidget {
+  const _StepLine({required this.active});
+
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 2,
+      margin: const EdgeInsets.only(bottom: 32),
+      color: active ? AppPalette.primary : AppPalette.progressTrack,
     );
   }
 }
@@ -411,37 +959,6 @@ class _CompactGroupMetric extends StatelessWidget {
   }
 }
 
-class _CompactMetaLine extends StatelessWidget {
-  const _CompactMetaLine({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return RichText(
-      text: TextSpan(
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: _TaskWorkbenchPalette.subtleInk,
-            ),
-        children: [
-          TextSpan(text: '$label  '),
-          TextSpan(
-            text: value,
-            style: const TextStyle(
-              color: _TaskWorkbenchPalette.ink,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _FileGroupCard extends ConsumerWidget {
   const _FileGroupCard({
     required this.jobId,
@@ -459,21 +976,22 @@ class _FileGroupCard extends ConsumerWidget {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: _TaskWorkbenchPalette.outline),
+        boxShadow: AppPalette.softShadow(0.26),
       ),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          tilePadding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          tilePadding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+          childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
           iconColor: _TaskWorkbenchPalette.brand,
           collapsedIconColor: _TaskWorkbenchPalette.brand,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(24),
           ),
           collapsedShape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(24),
           ),
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -487,7 +1005,8 @@ class _FileGroupCard extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
                             color: _TaskWorkbenchPalette.ink,
-                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
                           ),
                     ),
                   ),
@@ -499,7 +1018,7 @@ class _FileGroupCard extends ConsumerWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
-                  minHeight: 6,
+                  minHeight: 7,
                   value: ratio.clamp(0.0, 1.0),
                   backgroundColor: _TaskWorkbenchPalette.track,
                   color: statusStyle.color,
@@ -510,57 +1029,77 @@ class _FileGroupCard extends ConsumerWidget {
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 10),
             child: Wrap(
-              spacing: 14,
-              runSpacing: 8,
+              spacing: 16,
+              runSpacing: 10,
               children: [
-                _CompactGroupMetric(label: '成功', value: '${group.successCount}'),
+                _CompactGroupMetric(
+                    label: '成功', value: '${group.successCount}'),
                 _CompactGroupMetric(
                     label: '失败',
                     value: '${group.failedCount}',
                     tone: _TaskWorkbenchPalette.dangerInk),
-                _CompactGroupMetric(label: '跳过', value: '${group.skippedCount}'),
-                _CompactGroupMetric(label: '共', value: '${group.items.length} 条'),
+                _CompactGroupMetric(
+                    label: '跳过', value: '${group.skippedCount}'),
+                _CompactGroupMetric(
+                    label: '共', value: '${group.items.length} 条'),
               ],
             ),
           ),
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    group.failedCount > 0
-                        ? '建议优先核查失败记录，并结合证据截图定位问题。'
-                        : '当前文件组结果稳定，可重点查看成功记录的核验截图。',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TaskWorkbenchPalette.subtleInk,
-                          height: 1.5,
-                        ),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppPalette.cardSoft,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppPalette.lineSoft),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      group.failedCount > 0
+                          ? '建议优先核查失败记录，并结合证据截图定位问题。'
+                          : '当前文件组结果稳定，可重点查看成功记录的核验截图。',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: _TaskWorkbenchPalette.subtleInk,
+                            fontWeight: FontWeight.w700,
+                            height: 1.5,
+                          ),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.tonalIcon(
-                  onPressed: group.retryable
-                      ? () async {
-                          final messenger = ScaffoldMessenger.of(context);
-                          try {
-                            final newJobId = await ref
-                                .read(apiClientProvider)
-                                .retryTaskFile(jobId, group.fileId);
-                            if (!context.mounted) {
-                              return;
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton.tonalIcon(
+                      onPressed: group.retryable
+                          ? () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              try {
+                                final newJobId = await ref
+                                    .read(apiClientProvider)
+                                    .retryTaskFile(jobId, group.fileId);
+                                if (!context.mounted) {
+                                  return;
+                                }
+                                context.go('/tasks/$newJobId');
+                              } catch (error) {
+                                messenger.showSnackBar(
+                                  SnackBar(content: Text('重试失败：$error')),
+                                );
+                              }
                             }
-                            context.go('/tasks/$newJobId');
-                          } catch (error) {
-                            messenger.showSnackBar(
-                              SnackBar(content: Text('重试失败：$error')),
-                            );
-                          }
-                        }
-                      : null,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('重试文件'),
-                ),
-              ],
+                          : null,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('重试文件'),
+                      style: FilledButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             if (group.items.isEmpty)
@@ -599,86 +1138,143 @@ class _TaskItemCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: _TaskWorkbenchPalette.outline),
+        boxShadow: AppPalette.softShadow(0.18),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+        padding: const EdgeInsets.all(16),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
                     item.invoiceNumber?.isNotEmpty == true
                         ? item.invoiceNumber!
                         : '发票号码缺失',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           color: _TaskWorkbenchPalette.ink,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w900,
+                          height: 1.18,
+                          letterSpacing: -0.3,
                         ),
                   ),
-                  const SizedBox(height: 8),
-                  _CompactMetaLine(label: '开票日期', value: item.invoiceDate ?? '-'),
-                  const SizedBox(height: 4),
-                  _CompactMetaLine(label: '金额', value: amountText),
-                  if (item.failureSummary?.isNotEmpty == true) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      item.failureSummary!,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: _TaskWorkbenchPalette.dangerInk,
-                          ),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  Row(
+                ),
+                const SizedBox(width: 12),
+                _StatusPill(style: statusStyle),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
                     children: [
-                      OutlinedButton(
-                        onPressed: () => showModalBottomSheet<void>(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (_) => FractionallySizedBox(
-                            heightFactor: 0.92,
-                            child: _TaskItemEvidenceSheet(
-                              jobId: jobId,
-                              jobItemId: item.jobItemId,
-                            ),
+                      _TaskItemInfoRow(
+                        label: '开票日期',
+                        value: item.invoiceDate ?? '-',
+                      ),
+                      const SizedBox(height: 9),
+                      _TaskItemInfoRow(
+                        label: '金额',
+                        value: amountText,
+                      ),
+                      if (item.failureSummary?.isNotEmpty == true) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _TaskWorkbenchPalette.dangerSoft,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Text(
+                            item.failureSummary!,
+                            style:
+                                Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: _TaskWorkbenchPalette.dangerInk,
+                                      fontWeight: FontWeight.w800,
+                                      height: 1.45,
+                                    ),
                           ),
                         ),
-                        child: const Text('详情'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: () => showModalBottomSheet<void>(
-                          context: context,
-                          isScrollControlled: true,
-                          backgroundColor: Colors.transparent,
-                          builder: (_) => FractionallySizedBox(
-                            heightFactor: 0.92,
-                            child: _TaskItemEvidenceSheet(
-                              jobId: jobId,
-                              jobItemId: item.jobItemId,
-                            ),
-                          ),
-                        ),
-                        child: const Text('截图'),
-                      ),
+                      ],
                     ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                _StatusPill(style: statusStyle),
-                const SizedBox(height: 8),
+                ),
+                const SizedBox(width: 12),
                 _TaskItemThumb(jobId: jobId, jobItemId: item.jobItemId),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => FractionallySizedBox(
+                        heightFactor: 0.92,
+                        child: _TaskItemEvidenceSheet(
+                          jobId: jobId,
+                          jobItemId: item.jobItemId,
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.article_outlined, size: 18),
+                    label: const Text('详情'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _TaskWorkbenchPalette.ink,
+                      minimumSize: const Size(0, 50),
+                      side: const BorderSide(
+                        color: _TaskWorkbenchPalette.outline,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      backgroundColor: Colors.transparent,
+                      builder: (_) => FractionallySizedBox(
+                        heightFactor: 0.92,
+                        child: _TaskItemEvidenceSheet(
+                          jobId: jobId,
+                          jobItemId: item.jobItemId,
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.image_outlined, size: 18),
+                    label: const Text('截图'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppPalette.primary,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
               ],
             ),
           ],
@@ -688,117 +1284,48 @@ class _TaskItemCard extends StatelessWidget {
   }
 }
 
-class _ResultItemCard extends StatelessWidget {
-  const _ResultItemCard({
-    required this.jobId,
-    required this.fileName,
-    required this.item,
+class _TaskItemInfoRow extends StatelessWidget {
+  const _TaskItemInfoRow({
+    required this.label,
+    required this.value,
   });
 
-  final String jobId;
-  final String fileName;
-  final TaskItemModel item;
+  final String label;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    final statusStyle = _statusStyleForItem(item.statusLabel);
     return Container(
-      padding: const EdgeInsets.all(12),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _TaskWorkbenchPalette.outline),
+        color: AppPalette.cardSoft,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppPalette.lineSoft),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  fileName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: _TaskWorkbenchPalette.subtleInk,
-                      ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  item.invoiceNumber?.isNotEmpty == true
-                      ? item.invoiceNumber!
-                      : '发票号码缺失',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: _TaskWorkbenchPalette.ink,
-                      ),
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 6,
-                  children: [
-                    _ResultMetaText('开票日期', item.invoiceDate ?? '-'),
-                    _ResultMetaText('金额', '¥${item.amount ?? '-'}'),
-                  ],
-                ),
-                if (item.failureSummary?.isNotEmpty == true) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    item.failureSummary!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: _TaskWorkbenchPalette.dangerInk,
-                        ),
+          SizedBox(
+            width: 58,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppPalette.muted,
+                    fontWeight: FontWeight.w900,
                   ),
-                ],
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => showModalBottomSheet<void>(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (_) => FractionallySizedBox(
-                          heightFactor: 0.92,
-                          child: _TaskItemEvidenceSheet(
-                            jobId: jobId,
-                            jobItemId: item.jobItemId,
-                          ),
-                        ),
-                      ),
-                      child: const Text('处理说明'),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton(
-                      onPressed: () => showModalBottomSheet<void>(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (_) => FractionallySizedBox(
-                          heightFactor: 0.92,
-                          child: _TaskItemEvidenceSheet(
-                            jobId: jobId,
-                            jobItemId: item.jobItemId,
-                          ),
-                        ),
-                      ),
-                      child: const Text('证据截图'),
-                    ),
-                  ],
-                ),
-              ],
             ),
           ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _StatusPill(style: statusStyle),
-              const SizedBox(height: 8),
-              _TaskItemThumb(jobId: jobId, jobItemId: item.jobItemId),
-            ],
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppPalette.primaryDeep,
+                    fontWeight: FontWeight.w900,
+                  ),
+            ),
           ),
         ],
       ),
@@ -853,13 +1380,14 @@ class _TaskItemThumb extends ConsumerWidget {
     final baseUrl = ref.watch(apiBaseUrlProvider);
     final token = ref.watch(authTokenProvider);
     return Container(
-      width: 108,
-      height: 82,
+      width: 116,
+      height: 92,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F5F1),
-        borderRadius: BorderRadius.circular(12),
+        color: AppPalette.skySoft,
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: _TaskWorkbenchPalette.outline),
+        boxShadow: AppPalette.softShadow(0.12),
       ),
       child: evidence.when(
         loading: () => const Center(
@@ -928,35 +1456,26 @@ class _TaskItemEvidenceSheet extends ConsumerWidget {
             ),
             const SizedBox(height: 14),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 12, 12),
-              child: Row(
+              padding: const EdgeInsets.fromLTRB(14, 0, 8, 10),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '证据与处理详情',
-                          style:
-                              Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                    color: _TaskWorkbenchPalette.ink,
-                                  ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '明细 #$jobItemId · 用于核查抽取结果与税站截图',
-                          style:
-                              Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: _TaskWorkbenchPalette.subtleInk,
-                                  ),
-                        ),
-                      ],
+                  Center(
+                    child: Text(
+                      '证据与处理详情',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: _TaskWorkbenchPalette.ink,
+                          ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded),
+                  Positioned(
+                    right: 0,
+                    child: IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
                   ),
                 ],
               ),
@@ -977,36 +1496,18 @@ class _TaskItemEvidenceSheet extends ConsumerWidget {
                 data: (item) => ListView(
                   padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
                   children: [
-                    _EvidenceSummaryCard(item: item),
-                    const SizedBox(height: 16),
-                    _SectionHeading(
-                      title: '证据截图',
-                      subtitle: '优先查看核验截图，其次核对抽取截图',
-                    ),
-                    const SizedBox(height: 12),
-                    _EvidenceImageCard(
-                      title: '抽取截图',
-                      subtitle: 'OCR 抽取阶段生成的页面证据',
-                      imageUrl: item.extractScreenshotUrl,
-                      baseUrl: baseUrl,
-                      token: token,
-                    ),
-                    const SizedBox(height: 12),
                     _EvidenceImageCard(
                       title: '核验截图',
-                      subtitle: '税站核验结果页截图',
-                      imageUrl: item.verifyScreenshotUrl,
+                      imageUrl:
+                          item.verifyScreenshotUrl ?? item.extractScreenshotUrl,
                       baseUrl: baseUrl,
                       token: token,
                     ),
                     const SizedBox(height: 16),
-                    _SectionHeading(
-                      title: '处理备注',
-                      subtitle: '帮助财务人员判断是否需要重试或人工复核',
-                    ),
-                    const SizedBox(height: 12),
+                    _EvidenceSummaryCard(item: item),
+                    const SizedBox(height: 16),
                     _DetailTextCard(
-                      title: '人工摘要',
+                      title: '处理说明',
                       content: item.humanSummary ?? '暂无人工摘要',
                     ),
                     if (item.validationErrors.isNotEmpty) ...[
@@ -1052,12 +1553,10 @@ class _EvidenceSummaryCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    item.invoiceNumber?.isNotEmpty == true
-                        ? item.invoiceNumber!
-                        : '发票号码缺失',
+                    '字段摘要',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           color: _TaskWorkbenchPalette.ink,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w900,
                         ),
                   ),
                 ),
@@ -1065,27 +1564,23 @@ class _EvidenceSummaryCard extends StatelessWidget {
                   _StatusPill(style: statusStyle),
               ],
             ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _MicroMetricChip(
-                  label: '日期',
-                  value: item.invoiceDate ?? '-',
-                  tone: _TaskWorkbenchPalette.brand,
-                ),
-                _MicroMetricChip(
-                  label: '金额',
-                  value: item.totalAmount?.isNotEmpty == true
+            const SizedBox(height: 14),
+            _EvidenceFieldGrid(
+              rows: [
+                ('发票号码', item.invoiceNumber ?? '-'),
+                (
+                  '金额',
+                  item.totalAmount?.isNotEmpty == true
                       ? '¥${item.totalAmount}'
-                      : '-',
-                  tone: _TaskWorkbenchPalette.success,
+                      : '-'
                 ),
-                _MicroMetricChip(
-                  label: '销售方',
-                  value: item.sellerName ?? '-',
-                  tone: _TaskWorkbenchPalette.warning,
+                ('开票日期', item.invoiceDate ?? '-'),
+                ('销售方', item.sellerName ?? '-'),
+                (
+                  '价税合计',
+                  item.totalAmount?.isNotEmpty == true
+                      ? '¥${item.totalAmount}'
+                      : '-'
                 ),
               ],
             ),
@@ -1096,17 +1591,75 @@ class _EvidenceSummaryCard extends StatelessWidget {
   }
 }
 
+class _EvidenceFieldGrid extends StatelessWidget {
+  const _EvidenceFieldGrid({required this.rows});
+
+  final List<(String, String)> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 340 ? 2 : 1;
+        const gap = 10.0;
+        final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final row in rows)
+              SizedBox(
+                width: width,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                  decoration: BoxDecoration(
+                    color: AppPalette.cardSoft,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppPalette.lineSoft),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        row.$1,
+                        style: const TextStyle(
+                          color: AppPalette.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        row.$2,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppPalette.text,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _EvidenceImageCard extends StatelessWidget {
   const _EvidenceImageCard({
     required this.title,
-    required this.subtitle,
     required this.imageUrl,
     required this.baseUrl,
     required this.token,
   });
 
   final String title;
-  final String subtitle;
   final String? imageUrl;
   final String baseUrl;
   final String? token;
@@ -1124,19 +1677,57 @@ class _EvidenceImageCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: _TaskWorkbenchPalette.ink,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w900,
+                          color: _TaskWorkbenchPalette.ink,
+                        ),
                   ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _TaskWorkbenchPalette.subtleInk,
+                ),
+                if (imageUrl != null && imageUrl!.isNotEmpty)
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: AppPalette.primarySoft,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      tooltip: '放大截图',
+                      icon: const Icon(
+                        Icons.open_in_full_rounded,
+                        size: 16,
+                        color: AppPalette.primary,
+                      ),
+                      onPressed: () => showDialog<void>(
+                        context: context,
+                        builder: (context) => Dialog.fullscreen(
+                          child: Scaffold(
+                            appBar: AppBar(title: Text(title)),
+                            body: Container(
+                              color: Colors.black,
+                              alignment: Alignment.center,
+                              child: InteractiveViewer(
+                                minScale: 0.8,
+                                maxScale: 5,
+                                child: _NetworkEvidenceImage(
+                                  resolvedUrl: _resolveUrl(baseUrl, imageUrl!),
+                                  token: token,
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
+              ],
             ),
             const SizedBox(height: 12),
             if (imageUrl == null || imageUrl!.isEmpty)
@@ -1168,7 +1759,7 @@ class _EvidenceImageCard extends StatelessWidget {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(18),
                   child: SizedBox(
-                    height: 210,
+                    height: 260,
                     width: double.infinity,
                     child: Stack(
                       fit: StackFit.expand,
@@ -1197,7 +1788,7 @@ class _EvidenceImageCard extends StatelessWidget {
                                 vertical: 6,
                               ),
                               child: Text(
-                                '点击放大',
+                                '1/1',
                                 style: TextStyle(color: Colors.white),
                               ),
                             ),
@@ -1331,59 +1922,12 @@ class _TaskMessageView extends StatelessWidget {
   }
 }
 
-class _MicroMetricChip extends StatelessWidget {
-  const _MicroMetricChip({
-    required this.label,
-    required this.value,
-    required this.tone,
-  });
-
-  final String label;
-  final String value;
-  final Color tone;
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: RichText(
-          text: TextSpan(
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: _TaskWorkbenchPalette.ink,
-                ),
-            children: [
-              TextSpan(
-                text: '$label ',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              TextSpan(
-                text: value,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: tone,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _StatusPill extends StatelessWidget {
   const _StatusPill({
     required this.style,
-    this.compact = true,
   });
 
   final _StatusStyle style;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1393,10 +1937,7 @@ class _StatusPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
       ),
       child: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 10 : 12,
-          vertical: compact ? 7 : 8,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         child: Text(
           style.label,
           style: Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -1405,46 +1946,6 @@ class _StatusPill extends StatelessWidget {
               ),
         ),
       ),
-    );
-  }
-}
-
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({
-    required this.title,
-    required this.subtitle,
-  });
-
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: _TaskWorkbenchPalette.ink,
-                      fontWeight: FontWeight.w800,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                subtitle,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: _TaskWorkbenchPalette.subtleInk,
-                    ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -1591,19 +2092,19 @@ class _TaskItemEvidenceDetail {
 }
 
 class _TaskWorkbenchPalette {
-  static const Color canvas = Color(0xFFF4F7F2);
-  static const Color cardSubtle = Color(0xFFF7FAF8);
-  static const Color brand = Color(0xFF0B6E4F);
-  static const Color success = Color(0xFF11795B);
-  static const Color warning = Color(0xFFB9821B);
-  static const Color danger = Color(0xFFB04A39);
-  static const Color ink = Color(0xFF173229);
-  static const Color subtleInk = Color(0xFF60756D);
-  static const Color outline = Color(0xFFDCE8E1);
-  static const Color track = Color(0xFFE8F1EC);
-  static const Color handle = Color(0xFFB6C7BF);
-  static const Color dangerSoft = Color(0xFFF9EEEA);
-  static const Color dangerInk = Color(0xFF8D4334);
+  static const Color canvas = AppPalette.canvas;
+  static const Color cardSubtle = AppPalette.cardSoft;
+  static const Color brand = AppPalette.primary;
+  static const Color success = AppPalette.success;
+  static const Color warning = AppPalette.warning;
+  static const Color danger = AppPalette.danger;
+  static const Color ink = AppPalette.text;
+  static const Color subtleInk = AppPalette.muted;
+  static const Color outline = AppPalette.lineSoft;
+  static const Color track = AppPalette.skySoft;
+  static const Color handle = Color(0xFFA8D7EF);
+  static const Color dangerSoft = AppPalette.dangerSoft;
+  static const Color dangerInk = Color(0xFFA7353D);
 }
 
 class _StatusStyle {
@@ -1646,9 +2147,9 @@ _StatusStyle _statusStyleForTask(String status, bool isFinished) {
     default:
       return _StatusStyle(
         label: isFinished ? '结果已生成' : '处理中',
-        color: Colors.white,
-        background: Colors.white.withValues(alpha: 0.18),
-        foreground: Colors.white,
+        color: _TaskWorkbenchPalette.brand,
+        background: AppPalette.primarySoft,
+        foreground: _TaskWorkbenchPalette.brand,
       );
   }
 }
@@ -1659,7 +2160,7 @@ _StatusStyle _statusStyleForGroup(String status) {
       return const _StatusStyle(
         label: '稳定',
         color: _TaskWorkbenchPalette.success,
-        background: Color(0xFFE8F5EE),
+        background: AppPalette.successSoft,
         foreground: _TaskWorkbenchPalette.success,
       );
     case 'failed':
@@ -1680,7 +2181,7 @@ _StatusStyle _statusStyleForGroup(String status) {
       return const _StatusStyle(
         label: '处理中',
         color: _TaskWorkbenchPalette.brand,
-        background: Color(0xFFE8F3EF),
+        background: AppPalette.primarySoft,
         foreground: _TaskWorkbenchPalette.brand,
       );
   }
@@ -1691,7 +2192,7 @@ _StatusStyle _statusStyleForItem(String label) {
     return const _StatusStyle(
       label: '成功',
       color: _TaskWorkbenchPalette.success,
-      background: Color(0xFFE8F5EE),
+      background: AppPalette.successSoft,
       foreground: _TaskWorkbenchPalette.success,
     );
   }
@@ -1714,7 +2215,7 @@ _StatusStyle _statusStyleForItem(String label) {
   return _StatusStyle(
     label: label.isEmpty ? '处理中' : label,
     color: _TaskWorkbenchPalette.brand,
-    background: const Color(0xFFE8F3EF),
+    background: AppPalette.primarySoft,
     foreground: _TaskWorkbenchPalette.brand,
   );
 }

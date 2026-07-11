@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_palette.dart';
 import '../../router.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -37,17 +38,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
 
     return Scaffold(
       body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              const Color(0xFFF8FBF8),
-              colorScheme.surface,
-              const Color(0xFFE8F0EA),
-            ],
-          ),
-        ),
+        decoration: const BoxDecoration(gradient: AppPalette.pageGradient),
         child: Stack(
           children: [
             Positioned(
@@ -55,7 +46,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               right: -32,
               child: _BackdropOrb(
                 size: 220,
-                color: colorScheme.primaryContainer.withValues(alpha: 0.88),
+                color: AppPalette.sky.withValues(alpha: 0.38),
               ),
             ),
             Positioned(
@@ -63,7 +54,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
               left: -56,
               child: _BackdropOrb(
                 size: 168,
-                color: colorScheme.tertiaryContainer.withValues(alpha: 0.38),
+                color: AppPalette.primarySoft.withValues(alpha: 0.78),
               ),
             ),
             SafeArea(
@@ -76,7 +67,11 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 420),
-                        child: Card(
+                        child: Container(
+                          decoration: AppPalette.softCardDecoration(
+                            radius: 32,
+                            shadowAlpha: 0.9,
+                          ),
                           child: Padding(
                             padding: const EdgeInsets.all(28),
                             child: Column(
@@ -122,10 +117,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   controller: _usernameController,
                                   enabled: !isBusy,
                                   textInputAction: TextInputAction.next,
-                                  decoration: const InputDecoration(
+                                  decoration: _loginInputDecoration(
                                     labelText: '用户名',
                                     hintText: '请输入用户名',
-                                    prefixIcon: Icon(Icons.person_outline),
+                                    icon: Icons.person_outline,
                                   ),
                                 ),
                                 const SizedBox(height: 16),
@@ -134,10 +129,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   enabled: !isBusy,
                                   obscureText: true,
                                   textInputAction: TextInputAction.done,
-                                  decoration: const InputDecoration(
+                                  decoration: _loginInputDecoration(
                                     labelText: '密码',
                                     hintText: '请输入密码',
-                                    prefixIcon: Icon(Icons.lock_outline),
+                                    icon: Icons.lock_outline,
                                   ),
                                   onSubmitted: (_) => _handleLogin(context),
                                 ),
@@ -178,6 +173,18 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   onPressed: isBusy
                                       ? null
                                       : () => _handleLogin(context),
+                                  style: FilledButton.styleFrom(
+                                    minimumSize: const Size.fromHeight(58),
+                                    backgroundColor: AppPalette.primary,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(18),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 17,
+                                    ),
+                                  ),
                                   child: isBusy
                                       ? SizedBox(
                                           height: 20,
@@ -243,6 +250,16 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                                   icon: const Icon(Icons.swap_horiz_rounded),
                                   label: Text(
                                     endpointState.isLocal ? '切换到服务器' : '切换到本地',
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    minimumSize: const Size.fromHeight(52),
+                                    foregroundColor: AppPalette.primary,
+                                    side: const BorderSide(
+                                      color: AppPalette.line,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(18),
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 8),
@@ -364,6 +381,32 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       );
     }
   }
+}
+
+InputDecoration _loginInputDecoration({
+  required String labelText,
+  required String hintText,
+  required IconData icon,
+}) {
+  return InputDecoration(
+    filled: true,
+    fillColor: AppPalette.cardSoft,
+    labelText: labelText,
+    hintText: hintText,
+    prefixIcon: Icon(icon, color: AppPalette.muted),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: const BorderSide(color: AppPalette.lineSoft),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: const BorderSide(color: AppPalette.lineSoft),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(20),
+      borderSide: const BorderSide(color: AppPalette.primary, width: 1.4),
+    ),
+  );
 }
 
 class _FeatureBadge extends StatelessWidget {

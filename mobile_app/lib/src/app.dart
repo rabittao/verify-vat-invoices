@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/theme/app_palette.dart';
 import 'router.dart';
 
 class InvoiceVerificationApp extends ConsumerWidget {
@@ -12,6 +14,9 @@ class InvoiceVerificationApp extends ConsumerWidget {
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
       title: '发票核验工作台',
+      locale: const Locale('zh', 'CN'),
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      supportedLocales: const [Locale('zh', 'CN')],
       theme: _buildFinanceWorkbenchTheme(),
       routerConfig: router,
     );
@@ -19,39 +24,39 @@ class InvoiceVerificationApp extends ConsumerWidget {
 }
 
 ThemeData _buildFinanceWorkbenchTheme() {
-  const primary = Color(0xFF0B6B53);
-  const secondary = Color(0xFF2F7D68);
-  const tertiary = Color(0xFFB2863B);
-  const surface = Color(0xFFF4F7F2);
-  const surfaceSoft = Color(0xFFEAF1EB);
-  const outline = Color(0xFFBCCBC1);
+  const primary = AppPalette.primary;
+  const secondary = AppPalette.sky;
+  const tertiary = AppPalette.warning;
+  const surface = AppPalette.canvas;
+  const surfaceSoft = AppPalette.skySoft;
+  const outline = AppPalette.line;
 
   final scheme =
       ColorScheme.fromSeed(seedColor: primary, brightness: Brightness.light)
           .copyWith(
     primary: primary,
     onPrimary: Colors.white,
-    primaryContainer: const Color(0xFFCFE7DB),
-    onPrimaryContainer: const Color(0xFF072F24),
+    primaryContainer: AppPalette.primarySoft,
+    onPrimaryContainer: AppPalette.primaryDeep,
     secondary: secondary,
     onSecondary: Colors.white,
-    secondaryContainer: const Color(0xFFD9ECE4),
-    onSecondaryContainer: const Color(0xFF14392F),
+    secondaryContainer: AppPalette.skySoft,
+    onSecondaryContainer: AppPalette.primaryDeep,
     tertiary: tertiary,
     onTertiary: Colors.white,
-    tertiaryContainer: const Color(0xFFF3E5C7),
-    onTertiaryContainer: const Color(0xFF432D08),
+    tertiaryContainer: AppPalette.warningSoft,
+    onTertiaryContainer: const Color(0xFF6F4B09),
     surface: surface,
-    onSurface: const Color(0xFF13211B),
+    onSurface: AppPalette.text,
     surfaceContainerLowest: const Color(0xFFFFFFFF),
-    surfaceContainerLow: const Color(0xFFF7FAF7),
+    surfaceContainerLow: AppPalette.cardSoft,
     surfaceContainer: surfaceSoft,
-    surfaceContainerHigh: const Color(0xFFE2EBE4),
-    surfaceContainerHighest: const Color(0xFFD7E4DA),
-    onSurfaceVariant: const Color(0xFF44544C),
+    surfaceContainerHigh: AppPalette.primarySoft,
+    surfaceContainerHighest: const Color(0xFFCFEAF8),
+    onSurfaceVariant: AppPalette.muted,
     outline: outline,
-    outlineVariant: const Color(0xFFD4DED6),
-    shadow: const Color(0x140D241B),
+    outlineVariant: AppPalette.lineSoft,
+    shadow: AppPalette.shadow,
     surfaceTint: primary,
   );
 
@@ -160,7 +165,7 @@ ThemeData _buildFinanceWorkbenchTheme() {
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      backgroundColor: const Color(0xFF163429),
+      backgroundColor: AppPalette.primaryDeep,
       contentTextStyle: textTheme.bodyMedium?.copyWith(color: Colors.white),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),

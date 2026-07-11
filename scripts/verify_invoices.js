@@ -5,11 +5,6 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const {
-  QWEN_CAPTCHA_MODEL,
-  buildQwenCaptchaPayload,
-  extractQwenOutputText,
-} = require("./qwen_captcha_client");
-const {
   buildVerificationSignalSummary,
   classifyVerificationSignals,
   mergeScreenshotClassification,
@@ -40,6 +35,14 @@ const VERIFICATION_OUTCOME_WAIT_MS = 5000;
 const VERIFY_SINGLE_INVOICE_TIMEOUT_MS = (MAX_FULL_TEXT_ATTEMPTS + 1) * 60 * 1000; // 预算需覆盖完整 captcha 重试，否则真实 captcha_error 会被 script_error timeout 掩盖
 
 loadEnvFile(path.resolve(__dirname, "..", ".env"));
+
+// qwen_captcha_client reads its model setting when it is imported, so load
+// .env first to ensure direct CLI runs use the configured model.
+const {
+  QWEN_CAPTCHA_MODEL,
+  buildQwenCaptchaPayload,
+  extractQwenOutputText,
+} = require("./qwen_captcha_client");
 
 function parseArgs(argv) {
   const args = {

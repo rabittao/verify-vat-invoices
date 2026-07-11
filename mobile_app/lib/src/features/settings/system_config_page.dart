@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/models/app_state_models.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_layout.dart';
+import '../../core/theme/app_palette.dart';
 
-const _configGreen = Color(0xFF0B6E4F);
-const _configGreenDeep = Color(0xFF073B2A);
-const _configCanvas = Color(0xFFF4F8F5);
-const _configLine = Color(0xFFD7E4DC);
-const _configMuted = Color(0xFF5F746A);
+const _configCanvas = AppPalette.canvas;
 
 final systemConfigProvider =
     FutureProvider.autoDispose<SystemConfigModel>((ref) {
@@ -109,27 +108,24 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
       appBar: AppBar(
         backgroundColor: _configCanvas,
         surfaceTintColor: Colors.transparent,
-        titleSpacing: 20,
-        title: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('系统配置'),
-            SizedBox(height: 2),
-            Text(
-              '模型与密钥控制台',
-              style: TextStyle(fontSize: 12, color: _configMuted),
-            ),
-          ],
+        centerTitle: true,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          tooltip: '返回设置',
+          onPressed: () => context.go('/settings'),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+        ),
+        title: const Text(
+          '系统配置',
+          style: TextStyle(
+            color: AppPalette.text,
+            fontWeight: FontWeight.w800,
+          ),
         ),
       ),
       body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFF8FBF9), Color(0xFFF2F7F3)],
-          ),
-        ),
+        decoration: const BoxDecoration(gradient: AppPalette.pageGradient),
         child: config.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => Center(child: Text('系统配置加载失败：$error')),
@@ -141,110 +137,32 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
               _modelController.text = value.captchaModel;
             }
 
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-              children: [
-                _ConfigHeroCard(config: value),
-                const SizedBox(height: 18),
-                const _SectionHeader(
-                  title: '密钥状态',
-                  caption: '第一版仅开放模型相关参数，不暴露 CHROME_USER_DATA_DIR 等运行时路径。',
+            return LayoutBuilder(
+              builder: (context, constraints) => ListView(
+                padding: AppLayout.pageInsets(
+                  constraints.maxWidth,
+                  top: 8,
+                  bottom: 118,
                 ),
-                const SizedBox(height: 12),
-                _SecretStatusCard(
-                  title: 'QWEN_API_KEY',
-                  configured: value.qwenConfigured,
-                  maskedValue: value.qwenMaskedValue,
-                  description: '用于发票字段抽取和验证码识别。',
-                ),
-                const SizedBox(height: 20),
-                const _SectionHeader(
-                  title: '参数面板',
-                  caption: '把密钥更新和模型切换收束成财务人员可读的配置录入区。',
-                ),
-                const SizedBox(height: 12),
-                _InputPanel(
-                  title: 'QWEN 发票抽取',
-                  description: '更新抽取密钥或切换当前发票抽取模型。',
-                  children: [
-                    _SecretInputField(
-                      controller: _qwenController,
-                      labelText: '新的 QWEN_API_KEY',
-                      helperText: '留空则不更新',
-                      visible: _showQwenSecret,
-                      onToggleVisibility: () {
-                        setState(() => _showQwenSecret = !_showQwenSecret);
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    _ConfigTextField(
-                      controller: _invoiceModelController,
-                      labelText: 'QWEN_INVOICE_MODEL',
-                      helperText: '例如 qwen3.6-plus',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _InputPanel(
-                  title: '验证码识别模型',
-                  description: '切换当前验证码识别模型，默认 qwen3.6-plus。',
-                  children: [
-                    _ConfigTextField(
-                      controller: _modelController,
-                      labelText: 'QWEN_CAPTCHA_MODEL',
-                      helperText: '例如 qwen3.6-plus',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            _isValidating || _isSaving ? null : _validateConfig,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _configGreenDeep,
-                          side: const BorderSide(color: _configLine),
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        icon: _isValidating
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.fact_check_outlined),
-                        label: Text(_isValidating ? '校验中...' : '校验配置'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed:
-                            _isSaving || _isValidating ? null : _saveConfig,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _configGreen,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        icon: _isSaving
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.save_outlined),
-                        label: Text(_isSaving ? '保存中...' : '保存配置'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                children: [
+                  const _SystemConfigHero(),
+                  const SizedBox(height: 14),
+                  _SystemConfigBoard(
+                    config: value,
+                    qwenController: _qwenController,
+                    invoiceModelController: _invoiceModelController,
+                    captchaModelController: _modelController,
+                    showSecret: _showQwenSecret,
+                    validating: _isValidating,
+                    saving: _isSaving,
+                    onToggleSecret: () {
+                      setState(() => _showQwenSecret = !_showQwenSecret);
+                    },
+                    onValidate: _validateConfig,
+                    onSave: _saveConfig,
+                  ),
+                ],
+              ),
             );
           },
         ),
@@ -253,89 +171,232 @@ class _SystemConfigPageState extends ConsumerState<SystemConfigPage> {
   }
 }
 
-class _ConfigHeroCard extends StatelessWidget {
-  const _ConfigHeroCard({required this.config});
+class _SystemConfigHero extends StatelessWidget {
+  const _SystemConfigHero();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
+      decoration: BoxDecoration(
+        gradient: AppPalette.heroGradient,
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(color: AppPalette.lineSoft),
+        boxShadow: AppPalette.softShadow(0.55),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -34,
+            right: -12,
+            child: Container(
+              width: 132,
+              height: 82,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.34),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '系统配置',
+                style: TextStyle(
+                  color: AppPalette.primaryDeep,
+                  fontSize: 28,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.8,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                '维护 QWEN API Key、发票抽取模型与验证码识别模型。',
+                style: TextStyle(
+                  color: AppPalette.muted,
+                  fontWeight: FontWeight.w700,
+                  height: 1.45,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SystemConfigBoard extends StatelessWidget {
+  const _SystemConfigBoard({
+    required this.config,
+    required this.qwenController,
+    required this.invoiceModelController,
+    required this.captchaModelController,
+    required this.showSecret,
+    required this.validating,
+    required this.saving,
+    required this.onToggleSecret,
+    required this.onValidate,
+    required this.onSave,
+  });
+
+  final SystemConfigModel config;
+  final TextEditingController qwenController;
+  final TextEditingController invoiceModelController;
+  final TextEditingController captchaModelController;
+  final bool showSecret;
+  final bool validating;
+  final bool saving;
+  final VoidCallback onToggleSecret;
+  final VoidCallback onValidate;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 520;
+    return Container(
+      decoration: AppPalette.softCardDecoration(radius: 24),
+      padding: EdgeInsets.all(compact ? 16 : 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _ConfigIconTile(
+                icon: Icons.settings_suggest_rounded,
+                color: AppPalette.primary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '模型配置',
+                      style: TextStyle(
+                        color: AppPalette.text,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      config.qwenConfigured
+                          ? '密钥已配置，当前模型可直接用于抽取与验证码识别'
+                          : '请先配置 QWEN API Key，保存后再执行核验任务',
+                      style: const TextStyle(
+                        color: AppPalette.muted,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _ConfigStatePill(
+                label: config.qwenConfigured ? '已配置' : '未配置',
+                success: config.qwenConfigured,
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _SecretInputField(
+            controller: qwenController,
+            labelText: 'QWEN API Key',
+            helperText: config.qwenConfigured
+                ? '当前：${config.qwenMaskedValue ?? '已隐藏'}，留空则不更新'
+                : '请输入百炼 DashScope API Key',
+            visible: showSecret,
+            onToggleVisibility: onToggleSecret,
+          ),
+          const SizedBox(height: 14),
+          _ConfigTextField(
+            controller: invoiceModelController,
+            labelText: '发票抽取模型',
+            helperText: '当前建议 qwen3.6-plus',
+          ),
+          const SizedBox(height: 14),
+          _ConfigTextField(
+            controller: captchaModelController,
+            labelText: '验证码模型',
+            helperText: '当前建议 qwen3.6-plus',
+          ),
+          const SizedBox(height: 18),
+          _ConfigSummaryRows(config: config),
+          const SizedBox(height: 20),
+          if (compact)
+            Column(
+              children: [
+                _SaveConfigButton(
+                  saving: saving,
+                  disabled: validating,
+                  onPressed: onSave,
+                ),
+                const SizedBox(height: 10),
+                _ValidateConfigButton(
+                  validating: validating,
+                  disabled: saving,
+                  onPressed: onValidate,
+                ),
+              ],
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: _ValidateConfigButton(
+                    validating: validating,
+                    disabled: saving,
+                    onPressed: onValidate,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _SaveConfigButton(
+                    saving: saving,
+                    disabled: validating,
+                    onPressed: onSave,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConfigSummaryRows extends StatelessWidget {
+  const _ConfigSummaryRows({required this.config});
 
   final SystemConfigModel config;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_configGreen, _configGreenDeep],
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x1C073B2A),
-            blurRadius: 24,
-            offset: Offset(0, 12),
-          ),
-        ],
+        color: AppPalette.cardSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppPalette.lineSoft),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: const Text(
-              '配置总览',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          _ConfigReadonlyRow(
+            label: '当前抽取模型',
+            value: config.invoiceModelDisplay,
+            icon: Icons.document_scanner_outlined,
           ),
-          const SizedBox(height: 18),
-          const Text(
-            '模型与密钥一屏管理',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '强调已配置状态、当前模型与操作动作，让配置页更像真实工作台控制面板。',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.78),
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _HeroMetric(
-                  label: '密钥完成度',
-                  value:
-                      '${config.configuredSecretCount}/${config.totalSecretCount}',
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _HeroMetric(
-                  label: '抽取模型',
-                  value: config.invoiceModelDisplay,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _HeroMetric(
-            label: '验证码模型',
+          const Divider(height: 1, color: AppPalette.lineSoft),
+          _ConfigReadonlyRow(
+            label: '当前验证码模型',
             value: config.captchaModelDisplay,
-            fullWidth: true,
+            icon: Icons.password_rounded,
+          ),
+          const Divider(height: 1, color: AppPalette.lineSoft),
+          _ConfigReadonlyRow(
+            label: '密钥完成度',
+            value: '${config.configuredSecretCount}/${config.totalSecretCount}',
+            icon: Icons.verified_user_outlined,
           ),
         ],
       ),
@@ -343,157 +404,44 @@ class _ConfigHeroCard extends StatelessWidget {
   }
 }
 
-class _HeroMetric extends StatelessWidget {
-  const _HeroMetric({
+class _ConfigReadonlyRow extends StatelessWidget {
+  const _ConfigReadonlyRow({
     required this.label,
     required this.value,
-    this.fullWidth = false,
+    required this.icon,
   });
 
   final String label;
   final String value;
-  final bool fullWidth;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: fullWidth ? double.infinity : null,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.72))),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.title,
-    required this.caption,
-  });
-
-  final String title;
-  final String caption;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: _configGreenDeep,
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          caption,
-          style: const TextStyle(color: _configMuted, height: 1.45),
-        ),
-      ],
-    );
-  }
-}
-
-class _SecretStatusCard extends StatelessWidget {
-  const _SecretStatusCard({
-    required this.title,
-    required this.configured,
-    required this.maskedValue,
-    required this.description,
-  });
-
-  final String title;
-  final bool configured;
-  final String? maskedValue;
-  final String description;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _configLine),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x10073B2A),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: configured
-                  ? const Color(0xFFE8F3EE)
-                  : const Color(0xFFF7F0E1),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            alignment: Alignment.center,
-            child: Icon(
-              configured
-                  ? Icons.check_circle_outline_rounded
-                  : Icons.warning_amber_rounded,
-              color: configured ? _configGreenDeep : const Color(0xFF7D6126),
+          Icon(icon, color: AppPalette.primary, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: AppPalette.muted,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: _configGreenDeep,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  configured ? '已配置：${maskedValue ?? '******'}' : '未配置',
-                  style: TextStyle(
-                    color: configured
-                        ? const Color(0xFF20332B)
-                        : const Color(0xFF7D6126),
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  description,
-                  style: const TextStyle(color: _configMuted, height: 1.45),
-                ),
-              ],
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppPalette.text,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
         ],
@@ -502,53 +450,116 @@ class _SecretStatusCard extends StatelessWidget {
   }
 }
 
-class _InputPanel extends StatelessWidget {
-  const _InputPanel({
-    required this.title,
-    required this.description,
-    required this.children,
-  });
+class _ConfigIconTile extends StatelessWidget {
+  const _ConfigIconTile({required this.icon, required this.color});
 
-  final String title;
-  final String description;
-  final List<Widget> children;
+  final IconData icon;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      width: 44,
+      height: 44,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _configLine),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x10073B2A),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: _configGreenDeep,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            description,
-            style: const TextStyle(color: _configMuted, height: 1.45),
-          ),
-          const SizedBox(height: 16),
-          ...children,
-        ],
+      child: Icon(icon, color: color),
+    );
+  }
+}
+
+class _ConfigStatePill extends StatelessWidget {
+  const _ConfigStatePill({required this.label, required this.success});
+
+  final String label;
+  final bool success;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: success ? AppPalette.successSoft : AppPalette.warningSoft,
+        borderRadius: BorderRadius.circular(999),
       ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: success ? AppPalette.success : AppPalette.warning,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _ValidateConfigButton extends StatelessWidget {
+  const _ValidateConfigButton({
+    required this.validating,
+    required this.disabled,
+    required this.onPressed,
+  });
+
+  final bool validating;
+  final bool disabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: validating || disabled ? null : onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: AppPalette.primary,
+        side: const BorderSide(color: AppPalette.line),
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: validating
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.fact_check_outlined),
+      label: Text(validating ? '校验中...' : '校验配置'),
+    );
+  }
+}
+
+class _SaveConfigButton extends StatelessWidget {
+  const _SaveConfigButton({
+    required this.saving,
+    required this.disabled,
+    required this.onPressed,
+  });
+
+  final bool saving;
+  final bool disabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: saving || disabled ? null : onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: AppPalette.primary,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: saving
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.save_outlined),
+      label: Text(saving ? '保存中...' : '保存配置'),
     );
   }
 }
@@ -575,7 +586,7 @@ class _SecretInputField extends StatelessWidget {
       obscureText: !visible,
       decoration: InputDecoration(
         filled: true,
-        fillColor: const Color(0xFFF5F8F6),
+        fillColor: AppPalette.cardSoft,
         labelText: labelText,
         helperText: helperText,
         border: OutlineInputBorder(
@@ -611,7 +622,7 @@ class _ConfigTextField extends StatelessWidget {
       controller: controller,
       decoration: InputDecoration(
         filled: true,
-        fillColor: const Color(0xFFF5F8F6),
+        fillColor: AppPalette.cardSoft,
         labelText: labelText,
         helperText: helperText,
         border: OutlineInputBorder(

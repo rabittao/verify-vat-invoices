@@ -40,4 +40,16 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
   end
+
+  # Flutter writes Runner products to build/ios/iphoneos, while CocoaPods
+  # frameworks remain under PODS_CONFIGURATION_BUILD_DIR.
+  runner_support_dir = File.join(installer.sandbox.root, 'Target Support Files', 'Pods-Runner')
+  Dir.glob(File.join(runner_support_dir, 'Pods-Runner-frameworks*')).each do |path|
+    next unless File.file?(path)
+
+    content = File.read(path)
+    next unless content.include?('${BUILT_PRODUCTS_DIR}')
+
+    File.write(path, content.gsub('${BUILT_PRODUCTS_DIR}', '${PODS_CONFIGURATION_BUILD_DIR}'))
+  end
 end

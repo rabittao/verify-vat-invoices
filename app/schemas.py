@@ -127,6 +127,7 @@ class FileGroupResponse(BaseModel):
 
 class TaskDetailResponse(BaseModel):
     job_id: str
+    source_type: str
     status: str
     stage: str
     progress_percent: int
@@ -229,6 +230,7 @@ class LedgerInvoiceSummaryResponse(BaseModel):
     last_verified_at: datetime
     source_job: SourceJobRef | None
     has_screenshot: bool
+    screenshot_url: str | None
 
 
 class LedgerListResponse(BaseModel):

@@ -215,6 +215,7 @@ def build_task_card(session: Session, job: VerificationJob) -> dict[str, Any]:
     )
     return {
         "job_id": job.job_uuid,
+        "source_type": QR_INVOICE_SOURCE_TYPE if is_qr_invoice_job(job) else "pdf_upload",
         "status": job.status,
         "stage": job.stage,
         "progress_percent": job.progress_percent,
@@ -694,6 +695,11 @@ def parse_verified_timestamp(value: str | None) -> datetime | None:
 def upsert_invoice(session: Session, job: VerificationJob, item: VerificationJobItem) -> None:
     if not item.invoice_key or item.verification_status != "success" or not item.verified_at:
         return
+    item_display_total = display_total_amount(
+        item.invoice_type,
+        item.total_amount,
+        item.pretax_amount,
+    )
     existing = session.scalar(select(Invoice).where(Invoice.invoice_key == item.invoice_key))
     if existing is None:
         session.add(
@@ -707,7 +713,7 @@ def upsert_invoice(session: Session, job: VerificationJob, item: VerificationJob
                 invoice_date=item.invoice_date or "",
                 pretax_amount=item.pretax_amount or "",
                 tax_amount=item.tax_amount,
-                total_amount=item.total_amount,
+                total_amount=item_display_total,
                 seller_name=item.seller_name,
                 buyer_name=item.buyer_name,
                 check_code=item.check_code,
@@ -732,7 +738,7 @@ def upsert_invoice(session: Session, job: VerificationJob, item: VerificationJob
     existing.invoice_date = item.invoice_date or existing.invoice_date
     existing.pretax_amount = item.pretax_amount or existing.pretax_amount
     existing.tax_amount = item.tax_amount
-    existing.total_amount = item.total_amount
+    existing.total_amount = item_display_total or existing.total_amount
     existing.seller_name = item.seller_name
     existing.buyer_name = item.buyer_name
     existing.check_code = item.check_code
@@ -770,6 +776,11 @@ def build_invoice_info_cache_payload(job: VerificationJob, item: VerificationJob
 
 
 def _apply_invoice_from_item(invoice: Invoice, job: VerificationJob, item: VerificationJobItem) -> None:
+    item_display_total = display_total_amount(
+        item.invoice_type,
+        item.total_amount,
+        item.pretax_amount,
+    )
     invoice.latest_job_id = job.id
     invoice.latest_job_item_id = item.id
     invoice.invoice_type = item.invoice_type
@@ -778,7 +789,7 @@ def _apply_invoice_from_item(invoice: Invoice, job: VerificationJob, item: Verif
     invoice.invoice_date = item.invoice_date or invoice.invoice_date
     invoice.pretax_amount = item.pretax_amount or invoice.pretax_amount
     invoice.tax_amount = item.tax_amount
-    invoice.total_amount = item.total_amount
+    invoice.total_amount = item_display_total or invoice.total_amount
     invoice.seller_name = item.seller_name
     invoice.buyer_name = item.buyer_name
     invoice.check_code = item.check_code
@@ -1118,6 +1129,7 @@ def get_job_detail(session: Session, job_uuid: str) -> dict[str, Any]:
         file_groups.append(group)
     return {
         "job_id": job.job_uuid,
+        "source_type": QR_INVOICE_SOURCE_TYPE if is_qr_invoice_job(job) else "pdf_upload",
         "status": job.status,
         "stage": job.stage,
         "progress_percent": job.progress_percent,
@@ -1212,6 +1224,18 @@ def apply_ledger_filters(query, *, invoice_number: str | None, date_from: date |
     return query
 
 
+def display_total_amount(
+    invoice_type: str | None,
+    total_amount: str | None,
+    pretax_amount: str | None,
+) -> str | None:
+    if total_amount:
+        return total_amount
+    if invoice_type == "数电票/全电发票" and pretax_amount:
+        return pretax_amount
+    return total_amount
+
+
 def list_invoices(
     session: Session,
     *,
@@ -1269,12 +1293,13 @@ def list_invoices(
                 "invoice_date": row.invoice_date,
                 "pretax_amount": row.pretax_amount,
                 "tax_amount": row.tax_amount,
-                "total_amount": row.total_amount,
+                "total_amount": display_total_amount(row.invoice_type, row.total_amount, row.pretax_amount),
                 "seller_name": row.seller_name,
                 "buyer_name": row.buyer_name,
                 "last_verified_at": row.last_verified_at,
                 "source_job": {"job_id": session.scalar(select(VerificationJob.job_uuid).where(VerificationJob.id == row.latest_job_id)), "label": f"任务 {session.scalar(select(VerificationJob.job_uuid).where(VerificationJob.id == row.latest_job_id))}"},
                 "has_screenshot": bool(row.result_screenshot_path),
+                "screenshot_url": f"/api/files/invoices/{row.id}/screenshot" if row.result_screenshot_path else None,
             }
         )
     return {
@@ -1317,7 +1342,7 @@ def get_invoice_detail(session: Session, invoice_id: int) -> dict[str, Any]:
             "invoice_type": invoice.invoice_type,
             "pretax_amount": invoice.pretax_amount,
             "tax_amount": invoice.tax_amount,
-            "total_amount": invoice.total_amount,
+            "total_amount": display_total_amount(invoice.invoice_type, invoice.total_amount, invoice.pretax_amount),
         },
         "party_fields": {
             "seller_name": invoice.seller_name,
@@ -1392,7 +1417,7 @@ def export_invoice_list_excel(file_path: Path, invoices: Iterable[Invoice]) -> N
             row.invoice_type,
             row.pretax_amount,
             row.tax_amount,
-            row.total_amount,
+            display_total_amount(row.invoice_type, row.total_amount, row.pretax_amount),
             row.seller_name,
             row.buyer_name,
             row.last_verified_at.isoformat(),
@@ -1422,13 +1447,18 @@ def export_invoice_detail_pdf(file_path: Path, invoice: Invoice) -> None:
     pdf.setFont(font_name, 12)
     pdf.drawString(20 * mm, 285 * mm, "发票详情")
     pdf.setFont(font_name, 10)
+    total_amount = display_total_amount(
+        invoice.invoice_type,
+        invoice.total_amount,
+        invoice.pretax_amount,
+    )
     lines = [
         f"发票号码：{invoice.invoice_number}",
         f"开票日期：{invoice.invoice_date}",
         f"发票类型：{invoice.invoice_type or '-'}",
         f"税前金额：{invoice.pretax_amount}",
         f"税额：{invoice.tax_amount or '-'}",
-        f"价税合计：{invoice.total_amount or '-'}",
+        f"价税合计：{total_amount or '-'}",
         f"销售方：{invoice.seller_name or '-'}",
         f"购买方：{invoice.buyer_name or '-'}",
         f"最近核验时间：{invoice.last_verified_at.isoformat()}",

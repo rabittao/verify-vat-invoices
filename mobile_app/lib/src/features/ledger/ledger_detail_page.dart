@@ -4,13 +4,13 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/models/app_state_models.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_layout.dart';
+import '../../core/theme/app_palette.dart';
 
-const _detailGreen = Color(0xFF0B6E4F);
-const _detailGreenDeep = Color(0xFF073B2A);
-const _detailCanvas = Color(0xFFF4F8F5);
-const _detailPanel = Color(0xFFE8F3EE);
-const _detailLine = Color(0xFFD7E4DC);
-const _detailMuted = Color(0xFF5F746A);
+const _detailGreenDeep = AppPalette.primaryDeep;
+const _detailCanvas = AppPalette.canvas;
+const _detailLine = AppPalette.lineSoft;
+const _detailMuted = AppPalette.muted;
 
 final ledgerDetailProvider =
     FutureProvider.autoDispose.family<LedgerDetailModel, int>((ref, invoiceId) {
@@ -35,101 +35,174 @@ class LedgerDetailPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: _detailCanvas,
         surfaceTintColor: Colors.transparent,
-        titleSpacing: 20,
+        centerTitle: true,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          tooltip: '返回台账',
+          onPressed: () => context.go('/ledger'),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+        ),
         title: const Text('台账详情'),
+        actions: [
+          IconButton(
+            tooltip: '分享',
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('当前版本可先导出详情 PDF 后分享')),
+              );
+            },
+            icon: const Icon(Icons.share_outlined),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: DecoratedBox(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFFF8FBF9), Color(0xFFF2F7F3)],
-          ),
-        ),
+        decoration: const BoxDecoration(gradient: AppPalette.pageGradient),
         child: detail.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (error, _) => Center(child: Text('台账详情加载失败：$error')),
-          data: (invoice) => ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            children: [
-              _DetailHeroCard(
-                invoice: invoice,
-              ),
-              const SizedBox(height: 14),
-              _ScreenshotPanel(
-                invoice: invoice,
-                baseUrl: baseUrl,
-                token: token,
-              ),
-              const SizedBox(height: 14),
-              _SourceTaskPanel(
-                invoice: invoice,
-                onSourcePressed: () {
-                  final sourceJobId = invoice.sourceJobId;
-                  if (sourceJobId == null || sourceJobId.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('当前台账未关联来源任务')),
-                    );
-                    return;
-                  }
-                  context.go('/tasks/$sourceJobId');
-                },
-              ),
-              const SizedBox(height: 14),
-              _BottomActionBar(
-                onExportPressed: () async {
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    await ref.read(apiClientProvider).createExport(
-                          exportType: 'invoice_detail_pdf',
-                          invoiceId: invoice.invoiceId,
-                        );
-                    if (!context.mounted) {
-                      return;
-                    }
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('已创建详情 PDF 导出任务')),
-                    );
-                    context.push('/exports');
-                  } catch (error) {
-                    if (!context.mounted) {
-                      return;
-                    }
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('创建导出失败：$error')),
-                    );
-                  }
-                },
-                onSourcePressed: () {
-                  final sourceJobId = invoice.sourceJobId;
-                  if (sourceJobId == null || sourceJobId.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('当前台账未关联来源任务')),
-                    );
-                    return;
-                  }
-                  context.go('/tasks/$sourceJobId');
-                },
-              ),
-              const SizedBox(height: 14),
-              _FieldPanel(
+          data: (invoice) => LayoutBuilder(
+            builder: (context, constraints) {
+              final pageInsets = AppLayout.pageInsets(
+                constraints.maxWidth,
+                top: 10,
+                bottom: 126,
+              );
+              final horizontal = pageInsets.left;
+              return Stack(
                 children: [
-                  _DetailFieldTile(
-                    label: '发票号码',
-                    value: invoice.invoiceNumber,
-                    accent: true,
+                  ListView(
+                    padding: pageInsets,
+                    children: [
+                      _LedgerDetailDashboard(
+                        invoice: invoice,
+                        baseUrl: baseUrl,
+                        token: token,
+                      ),
+                    ],
                   ),
-                  _DetailFieldTile(label: '开票日期', value: invoice.invoiceDate),
-                  _DetailFieldTile(label: '价税合计', value: invoice.amountDisplay),
-                  _DetailFieldTile(label: '销售方', value: invoice.sellerDisplay),
-                  _DetailFieldTile(label: '购买方', value: invoice.buyerDisplay),
-                  _DetailFieldTile(label: '来源任务', value: invoice.sourceDisplay),
+                  Positioned(
+                    left: horizontal,
+                    right: horizontal,
+                    bottom: 16,
+                    child: SafeArea(
+                      top: false,
+                      child: _BottomActionBar(
+                        onExportPressed: () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          try {
+                            await ref.read(apiClientProvider).createExport(
+                                  exportType: 'invoice_detail_pdf',
+                                  invoiceId: invoice.invoiceId,
+                                );
+                            if (!context.mounted) {
+                              return;
+                            }
+                            messenger.showSnackBar(
+                              const SnackBar(content: Text('已创建详情 PDF 导出任务')),
+                            );
+                            context.push('/exports');
+                          } catch (error) {
+                            if (!context.mounted) {
+                              return;
+                            }
+                            messenger.showSnackBar(
+                              SnackBar(content: Text('创建导出失败：$error')),
+                            );
+                          }
+                        },
+                        onSourcePressed: () {
+                          final sourceJobId = invoice.sourceJobId;
+                          if (sourceJobId == null || sourceJobId.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('当前台账未关联来源任务')),
+                            );
+                            return;
+                          }
+                          context.go('/tasks/$sourceJobId');
+                        },
+                      ),
+                    ),
+                  ),
                 ],
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
+    );
+  }
+}
+
+class _LedgerDetailDashboard extends StatelessWidget {
+  const _LedgerDetailDashboard({
+    required this.invoice,
+    required this.baseUrl,
+    required this.token,
+  });
+
+  final LedgerDetailModel invoice;
+  final String baseUrl;
+  final String? token;
+
+  @override
+  Widget build(BuildContext context) {
+    final summaryColumn = Column(
+      children: [
+        _DetailHeroCard(invoice: invoice),
+        const SizedBox(height: 14),
+        _FieldPanel(
+          children: [
+            _DetailFieldTile(
+              label: '发票号码',
+              value: invoice.invoiceNumber,
+              accent: true,
+            ),
+            _DetailFieldTile(
+              label: '开票日期',
+              value: invoice.invoiceDate,
+            ),
+            _DetailFieldTile(
+              label: '销售方',
+              value: invoice.sellerDisplay,
+              caption: '统一社会信用代码：-',
+            ),
+            _DetailFieldTile(
+              label: '购买方',
+              value: invoice.buyerDisplay,
+              caption: '统一社会信用代码：-',
+            ),
+          ],
+        ),
+      ],
+    );
+    final screenshotPanel = _ScreenshotPanel(
+      invoice: invoice,
+      baseUrl: baseUrl,
+      token: token,
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 760) {
+          return Column(
+            children: [
+              summaryColumn,
+              const SizedBox(height: 14),
+              screenshotPanel,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 4, child: summaryColumn),
+            const SizedBox(width: 16),
+            Expanded(flex: 5, child: screenshotPanel),
+          ],
+        );
+      },
     );
   }
 }
@@ -145,15 +218,13 @@ class _DetailHeroCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_detailGreen, _detailGreenDeep],
-        ),
+        borderRadius: BorderRadius.circular(26),
+        color: Colors.white,
+        border: Border.all(color: AppPalette.lineSoft),
+        boxShadow: AppPalette.softShadow(0.7),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -161,58 +232,37 @@ class _DetailHeroCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: Text(
-                    invoice.invoiceNumber,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 23,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '价税合计',
+                        style: TextStyle(
+                          color: AppPalette.muted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _formatMoney(invoice.amountDisplay),
+                        style: const TextStyle(
+                          color: AppPalette.text,
+                          fontSize: 42,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1.4,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 12),
                 _HeroStatusChip(label: invoice.hasScreenshot ? '核验成功' : '截图缺失'),
               ],
             ),
+            const SizedBox(height: 18),
+            _HeroInfoLine(label: '开票日期', value: invoice.invoiceDate),
             const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _HeroInfoLine(label: '开票日期', value: invoice.invoiceDate),
-                      const SizedBox(height: 8),
-                      _HeroInfoLine(label: '销售方', value: invoice.sellerDisplay),
-                      const SizedBox(height: 8),
-                      _HeroInfoLine(label: '购买方', value: invoice.buyerDisplay),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '价税合计',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.76),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      invoice.amountDisplay,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+            _HeroInfoLine(label: '发票类型', value: invoice.invoiceTypeDisplay),
           ],
         ),
       ),
@@ -230,14 +280,14 @@ class _HeroStatusChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
+        color: AppPalette.primarySoft,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white24),
+        border: Border.all(color: AppPalette.line),
       ),
       child: Text(
         label,
         style: const TextStyle(
-          color: Colors.white,
+          color: AppPalette.primary,
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -259,7 +309,7 @@ class _HeroInfoLine extends StatelessWidget {
     return RichText(
       text: TextSpan(
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.74),
+          color: AppPalette.muted,
           fontSize: 13,
         ),
         children: [
@@ -267,7 +317,7 @@ class _HeroInfoLine extends StatelessWidget {
           TextSpan(
             text: value,
             style: const TextStyle(
-              color: Colors.white,
+              color: AppPalette.text,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -291,107 +341,88 @@ class _ScreenshotPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: _detailLine),
+        boxShadow: AppPalette.softShadow(0.28),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '核验截图（脱敏）',
-            style: TextStyle(
-              color: _detailGreenDeep,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Container(
-            height: 240,
-            decoration: BoxDecoration(
-              color: _detailPanel,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _ScreenshotPreview(
-                  screenshotUrl: invoice.screenshotUrl,
-                  baseUrl: baseUrl,
-                  token: token,
-                ),
-                const Positioned(
-                  right: 12,
-                  bottom: 12,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Color(0xAA1A1A1A),
-                      borderRadius: BorderRadius.all(Radius.circular(999)),
-                    ),
-                    child: Padding(
-                      padding:
-                          EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      child: Text(
-                        '1/1',
-                        style: TextStyle(color: Colors.white),
-                      ),
-                    ),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '核验截图',
+                  style: TextStyle(
+                    color: _detailGreenDeep,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-              ],
-            ),
+              ),
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppPalette.primarySoft,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.open_in_full_rounded,
+                  color: AppPalette.primary,
+                  size: 18,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final previewHeight =
+                  (constraints.maxWidth * 0.62).clamp(210.0, 360.0);
+              return Container(
+                height: previewHeight,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppPalette.lineSoft),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _ScreenshotPreview(
+                      screenshotUrl: invoice.fullscreenScreenshotUrl ??
+                          invoice.screenshotUrl,
+                      baseUrl: baseUrl,
+                      token: token,
+                    ),
+                    const Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Color(0xAA1A1A1A),
+                          borderRadius: BorderRadius.all(Radius.circular(999)),
+                        ),
+                        child: Padding(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          child: Text(
+                            '1/1',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _SourceTaskPanel extends StatelessWidget {
-  const _SourceTaskPanel({
-    required this.invoice,
-    required this.onSourcePressed,
-  });
-
-  final LedgerDetailModel invoice;
-  final VoidCallback onSourcePressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _detailLine),
-      ),
-      child: ListTile(
-        leading: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: _detailPanel,
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(Icons.description_outlined, color: _detailGreen),
-        ),
-        title: const Text(
-          '来源任务',
-          style: TextStyle(color: _detailMuted, fontSize: 13),
-        ),
-        subtitle: Text(
-          invoice.sourceDisplay,
-          style: const TextStyle(
-            color: Color(0xFF20332B),
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        trailing: OutlinedButton(
-          onPressed: onSourcePressed,
-          child: const Text('查看任务'),
-        ),
       ),
     );
   }
@@ -412,59 +443,43 @@ class _BottomActionBar extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: _detailLine),
+        boxShadow: AppPalette.softShadow(0.36),
       ),
       child: Row(
         children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: onSourcePressed,
+              icon: const Icon(Icons.article_outlined),
+              label: const Text('查看任务'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 54),
+                foregroundColor: AppPalette.primaryDeep,
+                side: const BorderSide(color: AppPalette.lineSoft),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: FilledButton.icon(
               onPressed: onExportPressed,
               icon: const Icon(Icons.picture_as_pdf_outlined),
               label: const Text('导出详情 PDF'),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                showModalBottomSheet<void>(
-                  context: context,
-                  builder: (context) => SafeArea(
-                    child: ListTile(
-                      leading: const Icon(Icons.share_outlined),
-                      title: const Text('分享'),
-                      subtitle: const Text('当前版本可先通过导出详情 PDF 进行分享。'),
-                      onTap: () => Navigator.of(context).pop(),
-                    ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.share_outlined),
-              label: const Text('分享'),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () {
-                showModalBottomSheet<void>(
-                  context: context,
-                  builder: (context) => SafeArea(
-                    child: ListTile(
-                      leading: const Icon(Icons.work_history_outlined),
-                      title: const Text('更多'),
-                      subtitle: const Text('查看来源任务'),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        onSourcePressed();
-                      },
-                    ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.more_horiz_rounded),
-              label: const Text('更多'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 54),
+                backgroundColor: AppPalette.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              ),
             ),
           ),
         ],
@@ -534,7 +549,7 @@ class _ScreenshotPreview extends StatelessWidget {
       child: _NetworkScreenshotImage(
         resolvedUrl: resolvedUrl,
         token: token,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
       ),
     );
   }
@@ -598,20 +613,27 @@ class _FieldPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(26),
         border: Border.all(color: _detailLine),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x10073B2A),
+            color: AppPalette.shadow,
             blurRadius: 18,
             offset: Offset(0, 10),
           ),
         ],
       ),
-      child: Column(children: children),
+      child: Column(
+        children: [
+          for (var index = 0; index < children.length; index++) ...[
+            children[index],
+            if (index != children.length - 1) const SizedBox(height: 12),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -620,49 +642,80 @@ class _DetailFieldTile extends StatelessWidget {
   const _DetailFieldTile({
     required this.label,
     required this.value,
+    this.caption,
     this.accent = false,
   });
 
   final String label;
   final String value;
+  final String? caption;
   final bool accent;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       decoration: BoxDecoration(
-        color: accent ? _detailPanel : _detailCanvas,
-        borderRadius: BorderRadius.circular(18),
+        color: accent ? AppPalette.primarySoft : AppPalette.cardSoft,
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 74,
+            width: 82,
             child: Text(
               label,
               style: const TextStyle(
                 color: _detailMuted,
-                fontWeight: FontWeight.w600,
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
               ),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                color: accent ? _detailGreenDeep : const Color(0xFF20332B),
-                fontSize: accent ? 16 : 15,
-                fontWeight: accent ? FontWeight.w700 : FontWeight.w500,
-                height: 1.45,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    color: accent ? _detailGreenDeep : AppPalette.text,
+                    fontSize: accent ? 17 : 16,
+                    fontWeight: accent ? FontWeight.w900 : FontWeight.w700,
+                    height: 1.32,
+                  ),
+                ),
+                if (caption != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    caption!,
+                    textAlign: TextAlign.left,
+                    style: const TextStyle(
+                      color: _detailMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
         ],
       ),
     );
   }
+}
+
+String _formatMoney(String value) {
+  final raw = value.trim();
+  if (raw.isEmpty || raw == '-') {
+    return '-';
+  }
+  if (raw.startsWith('¥') || raw.startsWith('￥')) {
+    return raw;
+  }
+  return '¥$raw';
 }

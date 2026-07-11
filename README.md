@@ -98,7 +98,10 @@ PDF 目录
 
 ```bash
 npm install
+npm run install:browsers
 ```
+
+`verify_invoices.js` 需要 Playwright 的 Chromium 浏览器来访问税务查验网站。首次安装依赖或切换 Playwright 版本后，必须执行 `npm run install:browsers`；否则查验阶段会因找不到浏览器二进制而失败。
 
 ### Python
 

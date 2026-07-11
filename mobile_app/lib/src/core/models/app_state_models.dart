@@ -449,6 +449,7 @@ class FileGroupModel {
 class TaskDetailModel {
   const TaskDetailModel({
     required this.jobId,
+    required this.sourceType,
     required this.status,
     required this.stage,
     required this.progressPercent,
@@ -465,6 +466,7 @@ class TaskDetailModel {
   });
 
   final String jobId;
+  final String sourceType;
   final String status;
   final String stage;
   final int progressPercent;
@@ -483,6 +485,8 @@ class TaskDetailModel {
       status == 'succeeded' ||
       status == 'partially_failed' ||
       status == 'failed';
+
+  bool get isQrInvoiceJob => sourceType == 'qr_invoice';
 
   String get stageLabel {
     return switch (stage) {
@@ -506,6 +510,7 @@ class TaskDetailModel {
         .toList();
     return TaskDetailModel(
       jobId: json['job_id'] as String,
+      sourceType: json['source_type'] as String? ?? 'pdf_upload',
       status: json['status'] as String? ?? '',
       stage: json['stage'] as String? ?? '',
       progressPercent: json['progress_percent'] as int? ?? 0,
@@ -617,6 +622,7 @@ class LedgerItemModel {
     required this.buyerName,
     required this.lastVerifiedAt,
     required this.hasScreenshot,
+    required this.screenshotUrl,
     required this.sourceJobId,
     required this.sourceJobLabel,
   });
@@ -633,6 +639,7 @@ class LedgerItemModel {
   final String? buyerName;
   final String lastVerifiedAt;
   final bool hasScreenshot;
+  final String? screenshotUrl;
   final String? sourceJobId;
   final String? sourceJobLabel;
 
@@ -652,6 +659,7 @@ class LedgerItemModel {
       buyerName: json['buyer_name'] as String?,
       lastVerifiedAt: json['last_verified_at'] as String? ?? '',
       hasScreenshot: json['has_screenshot'] as bool? ?? false,
+      screenshotUrl: json['screenshot_url'] as String?,
       sourceJobId: sourceJob?['job_id'] as String?,
       sourceJobLabel: sourceJob?['label'] as String?,
     );
@@ -665,8 +673,9 @@ extension LedgerItemPresentation on LedgerItemModel {
   String get buyerDisplay =>
       buyerName?.trim().isNotEmpty == true ? buyerName!.trim() : '-';
 
-  String get amountDisplay =>
-      totalAmount.trim().isNotEmpty ? totalAmount.trim() : '-';
+  String get amountDisplay => totalAmount.trim().isNotEmpty
+      ? totalAmount.trim()
+      : (pretaxAmount?.trim().isNotEmpty == true ? pretaxAmount!.trim() : '-');
 
   String get verificationDisplay =>
       _formatDateTimeToSecond(lastVerifiedAt) ?? '待补充核验时间';
@@ -775,8 +784,9 @@ extension LedgerDetailPresentation on LedgerDetailModel {
   String get buyerDisplay =>
       buyerName?.trim().isNotEmpty == true ? buyerName!.trim() : '-';
 
-  String get amountDisplay =>
-      totalAmount?.trim().isNotEmpty == true ? totalAmount!.trim() : '-';
+  String get amountDisplay => totalAmount?.trim().isNotEmpty == true
+      ? totalAmount!.trim()
+      : (pretaxAmount?.trim().isNotEmpty == true ? pretaxAmount!.trim() : '-');
 
   String get sourceDisplay => sourceJobLabel?.trim().isNotEmpty == true
       ? sourceJobLabel!.trim()

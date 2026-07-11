@@ -215,6 +215,10 @@ def parse_invoice_qr(raw_text: str) -> ParsedInvoiceQr:
     elif invoice_number:
         invoice_type = "增值税普通发票"
 
+    if invoice_type == "数电票/全电发票" and not total_amount:
+        # 数电票二维码通常只给一个金额字段，页面展示应作为价税合计使用。
+        total_amount = pretax_amount
+
     required = [invoice_number, invoice_date, pretax_amount]
     confidence = "high" if all(required) else "medium" if invoice_number else "low"
     parse_message = "二维码解析成功" if confidence == "high" else "二维码内容已读取，但关键字段不完整"

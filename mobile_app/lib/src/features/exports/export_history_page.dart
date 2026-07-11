@@ -5,12 +5,14 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/models/app_state_models.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_layout.dart';
+import '../../core/theme/app_palette.dart';
 
-const _exportGreen = Color(0xFF0B6E4F);
-const _exportGreenDeep = Color(0xFF073B2A);
-const _exportCanvas = Color(0xFFF4F8F5);
-const _exportLine = Color(0xFFD7E4DC);
-const _exportMuted = Color(0xFF5F746A);
+const _exportGreen = AppPalette.primary;
+const _exportGreenDeep = AppPalette.primaryDeep;
+const _exportCanvas = AppPalette.canvas;
+const _exportLine = AppPalette.lineSoft;
+const _exportMuted = AppPalette.muted;
 
 final exportHistoryProvider =
     FutureProvider.autoDispose<List<ExportRecordModel>>((ref) {
@@ -46,24 +48,24 @@ class ExportHistoryPage extends ConsumerWidget {
         color: _exportGreen,
         onRefresh: () async => ref.refresh(exportHistoryProvider.future),
         child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFFF8FBF9), Color(0xFFF2F7F3)],
-            ),
-          ),
+          decoration: const BoxDecoration(gradient: AppPalette.pageGradient),
           child: exports.when(
             loading: () => const _LoadingState(),
-            error: (error, _) => ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _MessageCard(
-                  icon: Icons.error_outline_rounded,
-                  title: '导出记录加载失败',
-                  message: '$error',
+            error: (error, _) => LayoutBuilder(
+              builder: (context, constraints) => ListView(
+                padding: AppLayout.pageInsets(
+                  constraints.maxWidth,
+                  top: 12,
+                  bottom: 32,
                 ),
-              ],
+                children: [
+                  _MessageCard(
+                    icon: Icons.error_outline_rounded,
+                    title: '导出记录加载失败',
+                    message: '$error',
+                  ),
+                ],
+              ),
             ),
             data: (items) {
               final readyCount =
@@ -72,108 +74,34 @@ class ExportHistoryPage extends ConsumerWidget {
                   .where((item) =>
                       item.status == 'pending' || item.status == 'processing')
                   .length;
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                children: [
-                  if (items.isEmpty)
-                    const _MessageCard(
-                      icon: Icons.inbox_outlined,
-                      title: '暂无导出记录',
-                      message: '当前还没有生成过导出文件。',
-                    )
-                  else
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        '共 ${items.length} 条记录',
-                        style: const TextStyle(color: _exportMuted),
-                      ),
+              return LayoutBuilder(
+                builder: (context, constraints) => ListView(
+                  padding: AppLayout.pageInsets(
+                    constraints.maxWidth,
+                    top: 12,
+                    bottom: 32,
+                  ),
+                  children: [
+                    _ExportHeroCard(
+                      totalCount: items.length,
+                      readyCount: readyCount,
+                      processingCount: processingCount,
                     ),
-                  if (items.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        children: [
-                          _TinySummaryChip(label: '可下载', value: '$readyCount'),
-                          const SizedBox(width: 8),
-                          _TinySummaryChip(
-                              label: '处理中', value: '$processingCount'),
-                        ],
-                      ),
-                    ),
-                  if (items.isEmpty)
-                    const SizedBox.shrink()
-                  else
-                    for (final item in items) ...[
-                      _ExportRecordCard(item: item),
-                      const SizedBox(height: 12),
-                    ],
-                ],
+                    const SizedBox(height: 14),
+                    if (items.isEmpty)
+                      const _MessageCard(
+                        icon: Icons.inbox_outlined,
+                        title: '暂无导出记录',
+                        message: '当前还没有生成过导出文件。',
+                      )
+                    else
+                      _ExportRecordsGrid(items: items),
+                  ],
+                ),
               );
             },
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TinySummaryChip extends StatelessWidget {
-  const _TinySummaryChip({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _exportLine),
-      ),
-      child: Text('$label $value', style: const TextStyle(color: _exportMuted)),
-    );
-  }
-}
-
-class _HeroMetric extends StatelessWidget {
-  const _HeroMetric({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white24),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.72))),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -184,21 +112,96 @@ class _LoadingState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: const [
-        _ExportHeroCard(
-          totalCount: null,
-          readyCount: null,
-          processingCount: null,
+    return LayoutBuilder(
+      builder: (context, constraints) => ListView(
+        padding: AppLayout.pageInsets(
+          constraints.maxWidth,
+          top: 12,
+          bottom: 32,
         ),
-        SizedBox(height: 18),
-        _MessageCard(
-          icon: Icons.cloud_sync_outlined,
-          title: '正在同步导出记录',
-          message: '请稍候，系统正在拉取最近的导出历史。',
+        children: const [
+          _ExportHeroCard(
+            totalCount: null,
+            readyCount: null,
+            processingCount: null,
+          ),
+          SizedBox(height: 18),
+          _MessageCard(
+            icon: Icons.cloud_sync_outlined,
+            title: '正在同步导出记录',
+            message: '请稍候，系统正在拉取最近的导出历史。',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExportRecordsGrid extends StatelessWidget {
+  const _ExportRecordsGrid({required this.items});
+
+  final List<ExportRecordModel> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: AppPalette.softCardDecoration(radius: 26, shadowAlpha: 0.75),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: AppPalette.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.file_download_outlined,
+                    color: Colors.white,
+                    size: 19,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    '导出记录',
+                    style: TextStyle(
+                      color: AppPalette.text,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppPalette.primarySoft,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '全部记录 ${items.length}',
+                    style: const TextStyle(
+                      color: AppPalette.primary,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            for (var index = 0; index < items.length; index++) ...[
+              _ExportRecordCard(item: items[index]),
+              if (index != items.length - 1)
+                const Divider(height: 1, color: AppPalette.lineSoft),
+            ],
+          ],
         ),
-      ],
+      ),
     );
   }
 }
@@ -219,71 +222,99 @@ class _ExportHeroCard extends StatelessWidget {
     String textOf(int? value) => value == null ? '--' : '$value';
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [_exportGreen, _exportGreenDeep],
-        ),
+        gradient: AppPalette.heroGradient,
+        border: Border.all(color: AppPalette.lineSoft),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x1C073B2A),
+            color: AppPalette.shadow,
             blurRadius: 24,
             offset: Offset(0, 12),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: const Text(
-              '出库看板',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
+          Positioned(
+            top: -34,
+            right: -4,
+            child: Container(
+              width: 128,
+              height: 78,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.36),
+                borderRadius: BorderRadius.circular(999),
               ),
             ),
           ),
-          const SizedBox(height: 18),
-          const Text(
-            '导出任务一屏追踪',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '把已完成、处理中与待下载的资料统一收束到同一条财务导出流水里。',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.78),
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 20),
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                  child: _HeroMetric(label: '总记录', value: textOf(totalCount))),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: _HeroMetric(label: '可下载', value: textOf(readyCount))),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: _HeroMetric(
-                label: '处理中',
-                value: textOf(processingCount),
-              )),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '导出记录',
+                          style: TextStyle(
+                            color: AppPalette.text,
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.8,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          '查看 PDF 与 Excel 导出历史，跟踪完成状态。',
+                          style: TextStyle(
+                            color: AppPalette.muted,
+                            height: 1.45,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppPalette.primarySoft,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      '全部记录',
+                      style: TextStyle(
+                        color: AppPalette.primary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.82),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: AppPalette.lineSoft),
+                ),
+                child: Text(
+                  '共 ${textOf(totalCount)} 条记录 · ${textOf(readyCount)} 个可下载 · ${textOf(processingCount)} 个处理中',
+                  style: const TextStyle(
+                    color: AppPalette.primaryDeep,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
             ],
           ),
         ],
@@ -312,201 +343,172 @@ class _ExportRecordCard extends ConsumerWidget {
       _ => const Color(0xFF7D6126),
     };
 
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _exportLine),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x10073B2A),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: item.isDownloadReady
+          ? () => _openExportFile(context, ref, item)
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: AppPalette.skySoft,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppPalette.lineSoft),
+              ),
+              child: Icon(
+                item.exportType == 'invoice_list_excel'
+                    ? Icons.grid_on_rounded
+                    : Icons.picture_as_pdf_outlined,
+                color: foregroundColor,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.fileDisplayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppPalette.text,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    _recordSubtitle(item),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppPalette.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (item.status == 'failed' &&
+                      item.errorMessage?.trim().isNotEmpty == true) ...[
+                    const SizedBox(height: 5),
                     Text(
-                      item.fileDisplayName,
+                      item.errorMessage!.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: _exportGreenDeep,
-                        fontSize: 17,
+                        color: AppPalette.danger,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '导出编号 ${item.exportId}',
-                      style: const TextStyle(color: _exportMuted),
-                    ),
                   ],
-                ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: statusBackground,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  item.statusLabel,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _TagChip(
-                icon: Icons.description_outlined,
-                label: item.exportTypeLabel,
-              ),
-              _TagChip(
-                icon: item.isDownloadReady
-                    ? Icons.download_done_outlined
-                    : Icons.hourglass_top_rounded,
-                label: item.isDownloadReady ? '可下载' : '待生成',
-                foregroundColor: foregroundColor,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: _exportCanvas,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.isDownloadReady
-                      ? '文件已生成，可直接拉取到本机临时目录并交给系统打开。'
-                      : item.errorMessage?.trim().isNotEmpty == true
-                          ? '失败原因：${item.errorMessage}'
-                          : '当前导出文件尚未可用，请稍后下拉刷新查看最新状态。',
-                  style: const TextStyle(
-                    color: _exportMuted,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _TagChip(
-                      icon: Icons.schedule_outlined,
-                      label: item.createdAt,
-                    ),
-                    _TagChip(
-                      icon: Icons.storage_outlined,
-                      label: item.fileSizeLabel,
-                    ),
-                  ],
-                ),
-                if (item.isDownloadReady) ...[
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.tonalIcon(
-                      onPressed: () async {
-                        final messenger = ScaffoldMessenger.of(context);
-                        try {
-                          final savedPath = await ref
-                              .read(apiClientProvider)
-                              .downloadProtectedFile(
-                                fileUrl: item.downloadUrl ?? item.openUrl ?? '',
-                                fallbackFileName:
-                                    item.fileName ?? '${item.exportId}.bin',
-                              );
-                          if (!context.mounted) {
-                            return;
-                          }
-                          final opened = await launchUrl(Uri.file(savedPath));
-                          messenger.showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                opened ? '已在系统中打开导出文件' : '文件已下载到：$savedPath',
-                              ),
-                            ),
-                          );
-                        } catch (error) {
-                          if (!context.mounted) {
-                            return;
-                          }
-                          messenger.showSnackBar(
-                            SnackBar(content: Text('打开导出文件失败：$error')),
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.open_in_new_rounded),
-                      label: const Text('打开导出文件'),
-                    ),
-                  ),
                 ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: statusBackground,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (item.status == 'completed') ...[
+                        const Icon(
+                          Icons.check_circle_rounded,
+                          size: 14,
+                          color: AppPalette.success,
+                        ),
+                        const SizedBox(width: 5),
+                      ] else if (item.status == 'processing' ||
+                          item.status == 'pending') ...[
+                        const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppPalette.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                      ],
+                      Text(
+                        item.statusLabel,
+                        style: TextStyle(
+                          color: statusColor,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  item.fileSizeLabel,
+                  style: const TextStyle(
+                    color: AppPalette.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
-}
 
-class _TagChip extends StatelessWidget {
-  const _TagChip({
-    required this.icon,
-    required this.label,
-    this.foregroundColor = _exportGreenDeep,
-  });
+  String _recordSubtitle(ExportRecordModel item) {
+    final createdAt = item.createdAt.trim();
+    if (createdAt.isEmpty) {
+      return item.exportTypeLabel;
+    }
+    return '${item.exportTypeLabel}  $createdAt';
+  }
 
-  final IconData icon;
-  final String label;
-  final Color foregroundColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEAF3EE),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: foregroundColor),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(
-              color: foregroundColor,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
+  Future<void> _openExportFile(
+    BuildContext context,
+    WidgetRef ref,
+    ExportRecordModel item,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final savedPath = await ref.read(apiClientProvider).downloadProtectedFile(
+            fileUrl: item.downloadUrl ?? item.openUrl ?? '',
+            fallbackFileName: item.fileName ?? '${item.exportId}.bin',
+          );
+      if (!context.mounted) {
+        return;
+      }
+      final opened = await launchUrl(Uri.file(savedPath));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(opened ? '已在系统中打开导出文件' : '文件已下载到：$savedPath'),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text('打开导出文件失败：$error')),
+      );
+    }
   }
 }
 
