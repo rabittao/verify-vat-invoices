@@ -16,7 +16,9 @@ function loadEnvFile(envPath, processEnv = process.env, fsModule = require("fs")
     const eqIndex = trimmed.indexOf("=");
     const key = trimmed.slice(0, eqIndex).trim();
     const value = trimmed.slice(eqIndex + 1).trim();
-    processEnv[key] = value;
+    if (!(key in processEnv) || processEnv[key] === "") {
+      processEnv[key] = value;
+    }
   }
 }
 
@@ -93,6 +95,10 @@ function selectBestScreenshotClip(candidates, viewport, padding = 16) {
   };
 }
 
+function selectVerificationEvidenceScreenshot({ modalScreenshotPath, fullPageScreenshotPath } = {}) {
+  return modalScreenshotPath || fullPageScreenshotPath || null;
+}
+
 function resolveCaptchaExhaustion({
   attempt,
   maxCaptchaAttempts,
@@ -147,4 +153,5 @@ module.exports = {
   nowIso,
   resolveCaptchaExhaustion,
   selectBestScreenshotClip,
+  selectVerificationEvidenceScreenshot,
 };

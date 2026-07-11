@@ -37,9 +37,8 @@ description: Use when Codex needs to scan folders for PDF 增值税发票, rende
 - Node.js 依赖已安装：`npm install`
 - `.env` 中至少有：
   - `QWEN_API_KEY`
-  - `OPENROUTER_API_KEY`
 - 可选：
-  - `OPENROUTER_CAPTCHA_MODEL`
+  - `QWEN_CAPTCHA_MODEL`
   - `CHROME_USER_DATA_DIR`
 
 如果税站对浏览器信任链要求更严格，优先配置 `CHROME_USER_DATA_DIR` 复用本地 Chrome 用户目录。

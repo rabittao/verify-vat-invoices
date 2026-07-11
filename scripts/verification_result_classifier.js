@@ -209,6 +209,9 @@ function shouldRunFullPageScreenshotFallback(screenshotClassification) {
   if (!screenshotClassification) {
     return true;
   }
+  if (screenshotClassification.status === "captcha_error") {
+    return false;
+  }
   return shouldRetryVerificationStatus(screenshotClassification.status);
 }
 
