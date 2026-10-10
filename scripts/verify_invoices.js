@@ -5,10 +5,10 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const {
-  OPENROUTER_CAPTCHA_MODEL,
-  buildOpenRouterCaptchaPayload,
-  extractOpenRouterOutputText,
-} = require("./openrouter_captcha_client");
+  callDeepSeekVision,
+  parseCaptchaResponse,
+  isPlainCaptchaPrompt,
+} = require("./deepseek_captcha_client");
 const {
   buildVerificationSignalSummary,
   classifyVerificationSignals,
@@ -29,7 +29,7 @@ const {
 } = require("./verify_invoices_helpers");
 
 const VERIFY_URL = "https://inv-veri.chinatax.gov.cn/?a=qyam";
-const MAX_FULL_TEXT_ATTEMPTS = 6;
+const MAX_FULL_TEXT_ATTEMPTS = 3;
 const MAX_REFRESH_RETRIES = 40;
 const VERIFY_SINGLE_INVOICE_TIMEOUT_MS = 4 * 60 * 1000; // 与验证码重试预算对齐，避免真实 captcha_error 被外层超时盖掉
 
@@ -37,7 +37,7 @@ loadEnvFile(path.resolve(__dirname, "..", ".env"));
 
 function parseArgs(argv) {
   const args = {
-    maxCaptchaAttempts: 1,
+    maxCaptchaAttempts: 3,
   };
   for (let index = 2; index < argv.length; index += 1) {
     const token = argv[index];
@@ -60,6 +60,9 @@ function parseArgs(argv) {
   }
   if (!args.inputJson || !args.outputJson || !args.artifactsDir) {
     throw new Error("Usage: verify_invoices.js --input-json <file> --output-json <file> --artifacts-dir <dir>");
+  }
+  if (!Number.isInteger(args.maxCaptchaAttempts) || args.maxCaptchaAttempts < 1 || args.maxCaptchaAttempts > 3) {
+    throw new Error("--max-captcha-attempts must be an integer between 1 and 3");
   }
   return args;
 }
@@ -215,106 +218,22 @@ async function findSubmitButton(page) {
 
 // ============================================================================
 // Vision Model OCR for Captcha
-// Model: Gemini 3 Flash Preview (via OpenRouter)
+// Model: deepseek-flash (DeepSeek official multimodal API)
 // ============================================================================
-
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-
-function buildCaptchaPrompt(promptText) {
-  const hintText = String(promptText || "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  // Detect color-specific captcha modes
-  const isRedText = hintText.includes("红色文字");
-  const isBlueText = hintText.includes("蓝色文字");
-
-  let colorInstruction = "";
-  if (isRedText) {
-    colorInstruction = "请只识别图中的红色字符，忽略其他颜色的字符。";
-  } else if (isBlueText) {
-    colorInstruction = "请只识别图中的蓝色字符，忽略其他颜色的字符。";
-  }
-
-  const hintInstruction = hintText ? `页面提示："${hintText}"。` : "";
-
-  return `This is a CAPTCHA image from a Chinese tax website.
-
-## Task
-${hintInstruction}${colorInstruction}Read the ${isRedText ? "red" : isBlueText ? "blue" : "all"} characters shown in the image.
-
-## Rules
-- Output ONLY the characters, nothing else - no explanation, no description, no Chinese text
-- Read from left to right
-- Characters may include uppercase letters, lowercase letters, numbers, and symbols like + - = etc.
-- Output exactly what you see in the image
-
-Characters:`;
-}
-
-function parseCaptchaResponse(text) {
-  const cleaned = String(text || "").trim();
-  // Remove any thinking tags like <|，修止|> etc
-  const withoutThinking = cleaned.replace(/<\|[^|]*\|>/g, "").trim();
-  // Filter out responses that are descriptions rather than actual characters
-  // (e.g. "四位" means "four digits" in Chinese - not a valid captcha answer)
-  if (/^[一二三四五六七八九十]+位$/.test(withoutThinking)) {
-    return "";
-  }
-  // Remove any Chinese characters that might be descriptions
-  const filtered = withoutThinking.replace(/[\u4e00-\u9fff]+/g, "").trim();
-  return filtered || withoutThinking;
-}
-
-async function callOpenRouterVision(imageBuffer, prompt, options = {}) {
-  if (!OPENROUTER_API_KEY) {
-    throw new Error("OPENROUTER_API_KEY not configured");
-  }
-
-  const base64Image = imageBuffer.toString("base64");
-  const payload = buildOpenRouterCaptchaPayload({
-    prompt,
-    base64Image,
-    model: OPENROUTER_CAPTCHA_MODEL,
-    maxTokens: options.maxTokens || 20,
-  });
-
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "HTTP-Referer": "https://github.com/verify-vat-invoices",
-      "X-Title": "verify-vat-invoices",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  const content = extractOpenRouterOutputText(data);
-  const parsed = parseCaptchaResponse(content);
-  return {
-    result: parsed,
-    rawContent: content,
-    model: OPENROUTER_CAPTCHA_MODEL,
-  };
+function buildCaptchaPrompt() {
+  return "识别图片中从左到右的全部验证码字符，保留大小写。只输出字符，不要解释、标点或代码块。无法确定任何字符时只输出 UNKNOWN。若含中文也输出 UNKNOWN；不要猜测或删掉中文后返回部分字符。";
 }
 
 async function captureCaptchaWithVisionModel(imageBuffer, promptText) {
   const prompt = buildCaptchaPrompt(promptText);
 
-  const apiResult = await callOpenRouterVision(imageBuffer, prompt);
+  const apiResult = await callDeepSeekVision(imageBuffer, prompt);
   return {
-    primaryCaptcha: apiResult.result,
+    primaryCaptcha: parseCaptchaResponse(apiResult.rawContent),
     alternativeCaptchas: [],
-    confidenceNote: `${OPENROUTER_CAPTCHA_MODEL}: single call`,
-    confidenceScore: 1.0,
-    modelUsed: OPENROUTER_CAPTCHA_MODEL,
+    confidenceNote: `${apiResult.model}: single call`,
+    confidenceScore: null,
+    modelUsed: apiResult.model,
   };
 }
 
@@ -337,7 +256,7 @@ async function classifyVerificationScreenshot(screenshotPath) {
   }
 
   const screenshotBuffer = fs.readFileSync(screenshotPath);
-  const apiResult = await callOpenRouterVision(
+  const apiResult = await callDeepSeekVision(
     screenshotBuffer,
     buildVerificationScreenshotPrompt(),
     { maxTokens: 120 }
@@ -504,6 +423,7 @@ async function waitForVerificationOutcome(page, timeoutMs = 15000, intervalMs = 
   let latestClassification = classifyVerificationSignals(latestSignals);
 
   while (Date.now() < deadline) {
+    if (page.trafficGuard) await page.trafficGuard.check(page);
     latestSignals = normalizeCollectedSignals(await collectVerificationSignals(page));
     latestClassification = classifyVerificationSignals(latestSignals);
 
@@ -622,7 +542,7 @@ async function readCaptchaPromptText(page) {
         texts.push(text);
       }
     }
-    return texts.join("\n");
+    return texts.join("\n").match(/请输入验证码(?:图片中\s*(?:红色|蓝色)\s*文字|文字)/)?.[0] || "";
   });
 }
 
@@ -644,6 +564,7 @@ async function collectCaptchaCandidates(captchaBuffer, promptText) {
 }
 
 async function refreshCaptcha(page, captchaImage) {
+  if (page.trafficGuard) await page.trafficGuard.wait("refresh");
   // 先强制关闭所有弹窗
   await forceCloseDialogs(page);
   await captchaImage.click({ force: true });
@@ -664,6 +585,7 @@ async function waitForSubmitButton(page, timeout = 5000) {
 }
 
 async function forceCloseDialogs(page) {
+  if (page.trafficGuard) await page.trafficGuard.check(page);
   try {
     await page.evaluate(() => {
       // 移除所有 <dialog> 元素
@@ -685,8 +607,7 @@ async function readCaptchaChallenge(page, record, artifactsDir, screenshotBase, 
   const pageText = await page.locator("body").innerText();
   const promptText = await readCaptchaPromptText(page);
   const amountInfo = resolveVerificationAmount(pageText, record);
-  const combined = [promptText, pageText].filter(Boolean).join("\n");
-  const captchaRule = detectCaptchaRule(combined);
+  const captchaRule = isPlainCaptchaPrompt(promptText) ? "full_text" : "unknown";
   const captchaImage = await findCaptchaImage(page);
   await captchaImage.waitFor({ state: "visible", timeout: 15000 });
   let captchaBuffer = await captchaImage.screenshot();
@@ -709,19 +630,35 @@ async function readCaptchaChallenge(page, record, artifactsDir, screenshotBase, 
     }
   }
 
-  // 根据captchaRule使用对应的颜色遮罩进行OCR
+  // 刷新图片后重新读提示，避免旧提示与新图片组合。
+  const currentPrompt = await readCaptchaPromptText(page);
+  const ready = captchaRule === "full_text" && isPlainCaptchaPrompt(currentPrompt);
+  // 不对颜色筛选或未知提示调用模型。
   const preprocessed = preprocessCaptchaImages(captchaBuffer, artifactsDir, screenshotBase, attempt, captchaRetry);
   const ocrBuffer = captchaBuffer;
   const ocrImagePath = preprocessed.original;
 
-  const candidateBundle = await collectCaptchaCandidates(ocrBuffer, promptText);
+  let candidateBundle = { primaryCaptcha: "", alternativeCaptchas: [] };
+  if (ready) {
+    if (page.trafficGuard) {
+      await page.trafficGuard.wait("submit");
+      await page.trafficGuard.check(page);
+    }
+    if (Number.isInteger(page.invoiceOcrAttempts)) page.invoiceOcrAttempts++;
+    try {
+      candidateBundle = await collectCaptchaCandidates(ocrBuffer, currentPrompt);
+    } catch (error) {
+      if (!error.retryable) throw error;
+      candidateBundle.confidenceNote = error.message;
+    }
+  }
   const captchaCandidates = [candidateBundle.primaryCaptcha, ...candidateBundle.alternativeCaptchas].filter(Boolean);
   return {
     pageText,
-    promptText,
-    captchaRuleDisplay: captchaRuleDisplay(captchaRule, promptText),
+    promptText: currentPrompt,
+    captchaRuleDisplay: captchaRuleDisplay(ready ? "full_text" : "unknown", currentPrompt),
     amountInfo,
-    captchaRule,
+    captchaRule: ready ? "full_text" : "unknown",
     captchaImage,
     imagePaths: { original: preprocessed.original, ocr_used: ocrImagePath, ...preprocessed },
     candidateBundle,
@@ -740,7 +677,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
     captcha: ["#yzm", "input[name='yzm']", "input[placeholder*='验证码']"],
   };
 
-  for (let attempt = 1; attempt <= maxCaptchaAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= 1; attempt += 1) {
     await forceCloseDialogs(page);
     await page.goto(VERIFY_URL, { waitUntil: "networkidle", timeout: 60000 });
     await page.waitForSelector("#fphm", { state: "visible", timeout: 30000 });
@@ -820,7 +757,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
     await forceCloseDialogs(page);
 
     // 验证码识别重试循环：最多提交 3 次 full_text 验证码
-    const maxFullTextAttempts = MAX_FULL_TEXT_ATTEMPTS;
+    const maxFullTextAttempts = Math.min(maxCaptchaAttempts, MAX_FULL_TEXT_ATTEMPTS);
     let challenge = null;
     let fullTextAttempts = 0;
     let captchaRetryCount = 0;
@@ -890,7 +827,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
           invoice_key: buildInvoiceKey(record),
           verification_status: "verification_form_not_activated",
           verification_message: "form validation did not activate the live verify button",
-          captcha_attempts: attempt,
+          captcha_attempts: Math.min(fullTextAttempts + 1, maxFullTextAttempts),
           captcha_rule: captchaRule,
           captcha_rule_display: challenge.captchaRuleDisplay,
           captcha_hint_text: challenge.promptText,
@@ -905,7 +842,11 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
           result_text: challenge.pageText.slice(0, 3000),
         };
       }
+      if (page.trafficGuard) {
+        await page.trafficGuard.check(page);
+      }
       await submitButton.click();
+      if (page.trafficGuard) page.trafficGuard.lastSubmit = Date.now();
 
       const outcome = await waitForVerificationOutcome(page);
       let classified = outcome.classified;
@@ -1015,7 +956,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
         invoice_key: buildInvoiceKey(record),
         verification_status: classified.status,
         verification_message: classified.message,
-        captcha_attempts: attempt,
+        captcha_attempts: Math.min(fullTextAttempts + 1, maxFullTextAttempts),
         captcha_rule: captchaRule,
         captcha_rule_display: challenge.captchaRuleDisplay,
         captcha_hint_text: challenge.promptText,
@@ -1045,7 +986,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
 
     const exhaustionOutcome = resolveCaptchaExhaustion({
       attempt,
-      maxCaptchaAttempts,
+      maxCaptchaAttempts: 1,
       record,
       challenge,
       captchaRetryHistory,
@@ -1230,7 +1171,9 @@ async function main() {
   console.log(`Wrote verification results to ${args.outputJson}`);
 }
 
-main().catch((error) => {
+if (require.main === module) main().catch((error) => {
   console.error(`[verify_invoices] ${error.stack || error.message || error}`);
   process.exit(1);
 });
+
+module.exports = { parseArgs, buildCaptchaPrompt, readCaptchaChallenge, verifySingleInvoice };

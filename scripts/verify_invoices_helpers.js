@@ -124,7 +124,7 @@ function resolveCaptchaExhaustion({
       verification_message: fullTextAttempts >= maxFullTextAttempts
         ? `captcha failed after ${maxFullTextAttempts} full_text attempts`
         : `captcha failed: could not get full_text captcha after ${maxRefreshRetries} refreshes`,
-      captcha_attempts: attempt,
+      captcha_attempts: fullTextAttempts,
       captcha_rule: challenge?.captchaRule || null,
       captcha_rule_display: challenge?.captchaRuleDisplay || "未识别到明确验证码规则",
       captcha_hint_text: challenge?.promptText || null,

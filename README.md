@@ -109,14 +109,15 @@ cp .env.example .env
 | 变量名 | 必填 | 作用 |
 |---|---|---|
 | `QWEN_API_KEY` | 是 | 抽取发票字段，供 `extract_invoices.py` 调用 DashScope Compatible API |
-| `OPENROUTER_API_KEY` | 是 | 识别验证码，供 `verify_invoices.js` 调用 OpenRouter |
-| `OPENROUTER_CAPTCHA_MODEL` | 否 | 验证码 OCR 模型，默认 `google/gemini-3-flash-preview` |
+| `DEEPSEEK_API_KEY` | 是 | 识别验证码，供 `verify_invoices.js` 调用 DeepSeek 官方 API |
+| `DEEPSEEK_CAPTCHA_MODEL` | 否 | 验证码 OCR 模型，默认 `deepseek-flash` |
+| `DEEPSEEK_BASE_URL` | 否 | 默认 `https://api.deepseek.com`，须为 HTTPS |
 | `CHROME_USER_DATA_DIR` | 否 | 指向本地 Chrome 用户目录，便于复用浏览器证书/信任配置 |
 
 说明：
 
 - 如果没有 `QWEN_API_KEY`，抽取阶段会直接失败
-- 如果没有 `OPENROUTER_API_KEY`，查验阶段中的验证码识别会失败
+- 如果没有 `DEEPSEEK_API_KEY`，查验阶段中的验证码识别会失败
 - 如果税务网站对浏览器信任链要求更严格，推荐配置 `CHROME_USER_DATA_DIR`
 
 ## 快速开始
@@ -252,11 +253,12 @@ output/
 
 ## 验证码策略
 
-- 自动识别“红色文字 / 蓝色文字 / 全部文字”三种规则
-- 识别不到明确规则时会刷新验证码，不立即提交
-- 单页内有提交重试和刷新重试
-- `--max-captcha-attempts` 表示页面级重试次数；单页验证码耗尽后，如果还有剩余页面级次数，会重新打开查验页面继续尝试
-- 默认使用 `google/gemini-3-flash-preview` 进行验证码 OCR，也可以通过 `OPENROUTER_CAPTCHA_MODEL` 切换 OpenRouter 上的其他模型
+- 仅在可见提示严格为“请输入验证码文字”时调用模型；红色、蓝色或未知提示先刷新，最多刷新 40 次
+- 仅接受 3–8 个英文字母，保留大小写；含中文、数字、解释或 UNKNOWN 的输出均按识别失败刷新重试
+- `--max-captcha-attempts` 默认 3，允许 1–3；每张发票最多识别 3 次，包含识别为空、接口暂时失败和网站拒绝后的重试，不再通过重开页面倍增次数
+- API 身份验证错误立即停止该张，不浪费剩余重试；请求有 30 秒超时
+- 验证结果截图的视觉兜底也复用 DeepSeek 接口，其调用不计入验证码识别次数
+- 默认使用 `deepseek-flash` 进行验证码 OCR，也可以通过 `DEEPSEEK_CAPTCHA_MODEL` 切换支持图片输入的 DeepSeek 模型
 
 ## 查验结果判定策略
 
@@ -271,3 +273,21 @@ output/
 - 目前只处理增值税发票，不覆盖机票、火车票、出租车票等票种
 - 抽取和验证码识别都依赖外部模型服务，准确率受模型和图片质量影响
 - 税务网站页面结构如果变化，Playwright 选择器和结果分类规则可能需要同步更新
+
+## DeepSeek 接入与验证
+
+验证码采用 `deepseek-flash` 的 Chat Completions 图片输入，关闭思考模式，仅提取最终回答。参考 [官方图像理解文档](https://api-docs.deepseek.com/zh-cn/guides/vision/) 与 [思考模式文档](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。验证码图片会发送至 DeepSeek；结果截图视觉兜底会发送包含发票信息的截图。
+
+填写本地 `.env` 中的 `DEEPSEEK_API_KEY` 后使用前述查验命令。无需 OpenAI 或 OpenRouter 密钥；完整 PDF 抽取流程仍需要 QWEN_API_KEY。
+
+运行 `npm test` 验证请求格式、错误处理、提示筛选和输出校验；离线测试不等同于真实模型识别或税务网站查验成功。
+
+### 本工作目录断点续跑
+
+该续跑入口用于现有工作目录，依赖上一级目录的 `查验程序/invoice_check.py`、`.核对工作/.venv/bin/python` 与已采集清单；这些本地发票资料及辅助环境不包含在仓库中。通用抽取和查验仍使用前述命令。
+
+`node scripts/resume_pending.js` 读取上一级目录 `.核对工作/manifest.json`，仅处理没有实际结果截图的发票。默认在后台浏览器的同一个标签页中处理全部发票，不弹出浏览器窗口，不使用日常工作浏览器的用户配置。
+
+验证码刷新至少间隔10秒，查验提交至少间隔65秒。识别到一分钟限流或访问频繁提示（包括网页弹窗与原生 alert）后，暂停65秒再在同一标签页刷新，继续当前发票；连续限流等待逐步延长，最长5分钟。每张发票的3次识别预算在限流续跑时保留。每日查验次数上限仍会停止，不按一分钟限流重试。
+
+进度和日志保存于 `output/resume/run-status.json`、`output/resume/results.json`、`output/resume/run.log`。运行PID保存于 `output/resume/runner.pid`，已有实例时拒绝重复启动；可向该PID发送SIGTERM停止。已有结果截图继续按原PDF文件名目录归档。

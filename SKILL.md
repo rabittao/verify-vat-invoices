@@ -37,9 +37,9 @@ description: Use when Codex needs to scan folders for PDF 增值税发票, rende
 - Node.js 依赖已安装：`npm install`
 - `.env` 中至少有：
   - `QWEN_API_KEY`
-  - `OPENROUTER_API_KEY`
+  - `DEEPSEEK_API_KEY`
 - 可选：
-  - `OPENROUTER_CAPTCHA_MODEL`
+  - `DEEPSEEK_CAPTCHA_MODEL`
   - `CHROME_USER_DATA_DIR`
 
 如果税站对浏览器信任链要求更严格，优先配置 `CHROME_USER_DATA_DIR` 复用本地 Chrome 用户目录。
@@ -118,3 +118,5 @@ python3 -m py_compile scripts/extract_invoices.py scripts/run_pipeline.py
 - 电子发票不一定填发票代码；但金额字段一定要和页面当前要求一致
 - `verified.json` 是后续汇总、筛选和人工复核的主结果文件；不要只看终端日志
 - 结果截图是判断“成功弹层 / 次数超限 / 系统异常 / 验证码错误”的第一手证据
+
+验证码：只处理“请输入验证码文字”提示，默认 deepseek-flash；仅接受英文字母，最多 3 次识别，不按页面重新累加预算。
