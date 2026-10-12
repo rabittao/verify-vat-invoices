@@ -6,7 +6,9 @@ function isPlainCaptchaPrompt(text) {
 function parseCaptchaResponse(text) {
   const value = String(text || "").trim();
   // Reject partial answers and explanatory text rather than stripping characters.
-  return /^[A-Za-z]{3,8}$/.test(value) && !/^(UNKNOWN|ERROR|NONE|NULL)$/i.test(value) ? value : "";
+  return /^[A-Za-z0-9]{2,8}$/u.test(value) &&
+    !/^(UNKNOWN|CHINESE|ERROR|NONE|NULL)$/i.test(value) &&
+    !/答案|验证码|无法|识别|字符|文字/.test(value) ? value : "";
 }
 
 function buildDeepSeekVisionPayload({ prompt, base64Image, model = "deepseek-flash", maxTokens = 128 }) {

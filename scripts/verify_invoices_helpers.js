@@ -120,10 +120,12 @@ function resolveCaptchaExhaustion({
     action: "return_result",
     result: {
       invoice_key: buildInvoiceKey(record),
-      verification_status: "captcha_error",
+      verification_status: fullTextAttempts >= maxFullTextAttempts ? "captcha_error" : "captcha_selection_exhausted",
       verification_message: fullTextAttempts >= maxFullTextAttempts
-        ? `captcha failed after ${maxFullTextAttempts} full_text attempts`
-        : `captcha failed: could not get full_text captcha after ${maxRefreshRetries} refreshes`,
+        ? `captcha failed after ${maxFullTextAttempts} valid captcha attempts`
+        : `captcha failed: selection paused after ${maxRefreshRetries} refreshes`,
+      failure_reason: lastRetry?.outcome || "no_plain_prompt",
+      submitted_attempts: captchaRetryHistory.filter(r => r.submitted_at).length,
       captcha_attempts: fullTextAttempts,
       captcha_rule: challenge?.captchaRule || null,
       captcha_rule_display: challenge?.captchaRuleDisplay || "未识别到明确验证码规则",

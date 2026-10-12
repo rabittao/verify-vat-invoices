@@ -58,7 +58,7 @@ function getVerificationSignalPriority(text) {
   if (/查无此票|信息不一致|不一致|字段不匹配|录入信息有误/.test(normalized)) {
     return 80;
   }
-  if (/验证码错误|校验码错误|图片验证码错误/.test(normalized)) {
+  if (/验证码错误|验证码失效|校验码错误|图片验证码错误/.test(normalized)) {
     return 70;
   }
   if (/发票查验说明|首次查验前请点此安装根证书/.test(normalized)) {
@@ -147,7 +147,7 @@ function classifyTerminalStatusText(text) {
     };
   }
 
-  if (/验证码错误|校验码错误|图片验证码错误/.test(normalized)) {
+  if (/验证码错误|验证码失效|校验码错误|图片验证码错误/.test(normalized)) {
     return {
       status: "captcha_error",
       message: "captcha rejected by website",
@@ -284,7 +284,7 @@ function classifyVerificationSignals(signals) {
     };
   }
 
-  const captchaMatch = allContexts.find((text) => /验证码错误|校验码错误|图片验证码错误/.test(text));
+  const captchaMatch = allContexts.find((text) => /验证码错误|验证码失效|校验码错误|图片验证码错误/.test(text));
   if (captchaMatch) {
     return {
       status: "captcha_error",

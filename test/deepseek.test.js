@@ -23,12 +23,13 @@ test('DeepSeek request uses official vision shape and preserves final content', 
   assert.equal(result.rawContent, 'AbCd');
 });
 
-test('plain prompt and complete English answers only', () => {
+test('plain prompt accepts alphanumeric answers and rejects any Chinese', () => {
   assert.equal(client.isPlainCaptchaPrompt('请输入验证码文字'), true);
   assert.equal(client.isPlainCaptchaPrompt('请输入验证码图片中 蓝色 文字'), false);
   assert.equal(client.isPlainCaptchaPrompt('其他请输入验证码文字'), false);
   assert.equal(client.parseCaptchaResponse(' AbCd '), 'AbCd');
-  for (const answer of ['UNKNOWN', 'A中BC', 'A1BC', '答案是ABCD', 'AB CD', '```ABCD```', '']) {
+  for (const answer of ['A1BC', '1234']) assert.equal(client.parseCaptchaResponse(answer), answer);
+  for (const answer of ['CHINESE', 'A中BC', '仙乃日', '贝急T5', '尪FM', 'UNKNOWN', '答案是ABCD', 'AB CD', '```ABCD```', '']) {
     assert.equal(client.parseCaptchaResponse(answer), '');
   }
 });
@@ -66,12 +67,14 @@ test('challenge gates model calls on the current prompt, including refresh chang
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(file, 'utf8'), sandbox);
   sandbox.calls = 0;
+  sandbox.saves = 0;
   sandbox.hints = [];
   vm.runInContext(`
     readCaptchaPromptText = async () => hints.shift();
     resolveVerificationAmount = () => ({});
     findCaptchaImage = async () => ({ waitFor: async () => {}, screenshot: async () => Buffer.from('img') });
-    preprocessCaptchaImages = () => ({ original: 'mock.png' });
+    enlargeCaptchaForModel = async (_, buffer) => buffer;
+    preprocessCaptchaImages = () => { saves++; return { original: 'mock.png' }; };
     collectCaptchaCandidates = async () => { calls++; return { primaryCaptcha: 'ABCD', alternativeCaptchas: [] }; };
   `, sandbox);
   const page = { locator: () => ({ innerText: async () => '请输入验证码文字' }) };
@@ -84,11 +87,13 @@ test('challenge gates model calls on the current prompt, including refresh chang
     sandbox.hints = hints;
     const outcome = await sandbox.module.exports.readCaptchaChallenge(page, {}, '.', 'sample', 1);
     assert.equal(outcome.captchaCandidates.length, expected);
+    assert.equal(outcome.imagePaths.original, expected ? 'mock.png' : null);
   }
   assert.equal(sandbox.calls, 1);
+  assert.equal(sandbox.saves, 1);
 });
 
-test('actual invoice retry loop stops after 3 empty recognitions on one page', async () => {
+test('empty recognitions never consume valid candidate budget and pause after selection cap', async () => {
   const file = path.resolve(__dirname, '../scripts/verify_invoices.js');
   const sandbox = { require: createRequire(file), module: { exports: {} }, __dirname: path.dirname(file), console, Buffer, process };
   vm.createContext(sandbox);
@@ -115,9 +120,9 @@ test('actual invoice retry loop stops after 3 empty recognitions on one page', a
   };
   const record = { invoice_number: '12345678901234567890', invoice_date: '2026-09-02', pretax_amount: '10.00', total_amount: '10.00' };
   const outcome = await sandbox.module.exports.verifySingleInvoice(page, record, '.', 3);
-  assert.equal(sandbox.calls, 3);
+  assert.equal(sandbox.calls, 40);
   assert.equal(navigations, 1);
-  assert.equal(outcome.verification_status, 'captcha_error');
-  assert.equal(outcome.captcha_attempts, 3);
-  assert.equal(outcome.captcha_retry_history.length, 3);
+  assert.equal(outcome.verification_status, 'captcha_selection_exhausted');
+  assert.equal(outcome.captcha_attempts, 0);
+  assert.equal(outcome.captcha_retry_history.length, 40);
 });

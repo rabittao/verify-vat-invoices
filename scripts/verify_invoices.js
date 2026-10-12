@@ -28,7 +28,10 @@ const {
   selectBestScreenshotClip,
 } = require("./verify_invoices_helpers");
 
-const VERIFY_URL = "https://inv-veri.chinatax.gov.cn/?a=qyam";
+const { installSubmissionTrace, submissionFailure, clickVerificationButton } = require("./submission_trace");
+
+const { VERIFY_URL, MODERN_FIELDS, selectInvoiceDate } = require("./tax_site");
+const { recognizeCheckedCaptcha } = require('./captcha_content_gate');
 const MAX_FULL_TEXT_ATTEMPTS = 3;
 const MAX_REFRESH_RETRIES = 40;
 const VERIFY_SINGLE_INVOICE_TIMEOUT_MS = 4 * 60 * 1000; // 与验证码重试预算对齐，避免真实 captcha_error 被外层超时盖掉
@@ -145,6 +148,10 @@ async function fillField(page, value, selectors, name) {
     throw new Error(`Unable to find input for ${name}`);
   }
   const cleanValue = sanitizeForInput(value);
+  if (name === "invoice_date" && await locator.getAttribute("readonly") !== null) {
+    await selectInvoiceDate(page, cleanValue);
+    return locator;
+  }
   await locator.click({ force: true });
   await locator.fill("");
   await locator.fill(cleanValue);
@@ -170,6 +177,7 @@ async function fillField(page, value, selectors, name) {
 
 async function findCaptchaImage(page) {
   const selectors = [
+    "img[width='120'][height='50']",
     "#yzm_img",
     "img[alt*='验证码']",
     "img[title*='验证码']",
@@ -221,20 +229,11 @@ async function findSubmitButton(page) {
 // Model: deepseek-flash (DeepSeek official multimodal API)
 // ============================================================================
 function buildCaptchaPrompt() {
-  return "识别图片中从左到右的全部验证码字符，保留大小写。只输出字符，不要解释、标点或代码块。无法确定任何字符时只输出 UNKNOWN。若含中文也输出 UNKNOWN；不要猜测或删掉中文后返回部分字符。";
+  return "识别图片中从左到右的全部验证码字符，保留大小写。逐个检查完整轮廓，忽略彩色干扰线和立体阴影。特别区分大写 I 与 T：I 的顶部和底部均有横线，T 只有顶部横线；区分 R 与 B：R 的右下部是斜腿，B 是封闭圆弧。不要把干扰线拆成字符，不要添加图片中不存在的字符。只输出字符，不要解释、标点或代码块。无法确定任何字符时只输出 UNKNOWN。只接受英文字母和数字。如果图片中出现任何中文汉字，整张只输出 CHINESE，不要输出其余字符，不要尝试把汉字转成字母。";
 }
 
 async function captureCaptchaWithVisionModel(imageBuffer, promptText) {
-  const prompt = buildCaptchaPrompt(promptText);
-
-  const apiResult = await callDeepSeekVision(imageBuffer, prompt);
-  return {
-    primaryCaptcha: parseCaptchaResponse(apiResult.rawContent),
-    alternativeCaptchas: [],
-    confidenceNote: `${apiResult.model}: single call`,
-    confidenceScore: null,
-    modelUsed: apiResult.model,
-  };
+  return recognizeCheckedCaptcha(imageBuffer, buildCaptchaPrompt(promptText));
 }
 
 function buildVerificationScreenshotPrompt() {
@@ -270,7 +269,7 @@ async function classifyVerificationScreenshot(screenshotPath) {
 async function getVerificationScreenshotClip(page) {
   const geometry = await page.evaluate(() => {
     const normalizeText = (text) => String(text || "").replace(/\s+/g, " ").trim();
-    const keywordPattern = /发票查验明细|查验次数|打印|关闭|验证码错误|校验码错误|图片验证码错误|系统异常|请重试|查无此票|信息不一致|不一致|字段不匹配|录入信息有误|超过该张发票当日查验次数|请于次日再次查验/;
+    const keywordPattern = /发票查验明细|查验次数|打印|关闭|验证码错误|验证码失效|校验码错误|图片验证码错误|系统异常|请重试|查无此票|信息不一致|不一致|字段不匹配|录入信息有误|超过该张发票当日查验次数|请于次日再次查验/;
 
     function isVisible(el) {
       if (!el || !el.isConnected) {
@@ -328,9 +327,9 @@ async function getVerificationScreenshotClip(page) {
 }
 
 async function collectVerificationSignals(page) {
-  return page.evaluate(() => {
+  const signals = await page.evaluate(() => {
     const normalizeText = (text) => String(text || "").replace(/\s+/g, " ").trim();
-    const keywordPattern = /发票查验明细|查验次数|打印|关闭|验证码错误|校验码错误|图片验证码错误|查无此票|信息不一致|不一致|字段不匹配|录入信息有误|发票号码|开票日期|价税合计|发票查验说明|首次查验前请点此安装根证书|查验成功|相符|超过该张发票当日查验次数|请于次日再次查验|超过.*查验次数/;
+    const keywordPattern = /发票查验明细|查验次数|打印|关闭|验证码错误|验证码失效|校验码错误|图片验证码错误|查无此票|信息不一致|不一致|字段不匹配|录入信息有误|发票号码|开票日期|价税合计|发票查验说明|首次查验前请点此安装根证书|查验成功|相符|超过该张发票当日查验次数|请于次日再次查验|超过.*查验次数/;
 
     function isVisible(el) {
       if (!el || !el.isConnected) {
@@ -407,6 +406,18 @@ async function collectVerificationSignals(page) {
       visibleKeywordCandidates,
     };
   });
+  signals.popupTexts.push(...(page.verificationDialogs || []).map(d => d.message));
+  // 真实结果可能在可见iframe内，直接读取，避免等待后再调用模型猜结果。
+  if (typeof page.frames === "function") {
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame()) continue;
+      const element = await frame.frameElement().catch(() => null);
+      if (!element || !await element.isVisible().catch(() => false)) continue;
+      const text = await frame.locator("body").innerText().catch(() => "");
+      if (text) signals.popupTexts.push(text);
+    }
+  }
+  return signals;
 }
 
 function normalizeCollectedSignals(signals) {
@@ -427,13 +438,14 @@ async function waitForVerificationOutcome(page, timeoutMs = 15000, intervalMs = 
     latestSignals = normalizeCollectedSignals(await collectVerificationSignals(page));
     latestClassification = classifyVerificationSignals(latestSignals);
 
-    if (["success", "daily_limit_exceeded", "data_mismatch"].includes(latestClassification.status)) {
+    if (["success", "daily_limit_exceeded", "data_mismatch", "captcha_error"].includes(latestClassification.status)) {
       return {
         signals: latestSignals,
         classified: latestClassification,
       };
     }
 
+    if (page.submissionTrace?.requests?.some(r => r.failure || (r.response_status !== null && r.response_status >= 400))) break;
     await page.waitForTimeout(intervalMs);
   }
 
@@ -503,6 +515,7 @@ async function readCaptchaPromptText(page) {
   return page.evaluate(() => {
     // Find the VISIBLE captcha input (page may have duplicate hidden forms)
     const candidates = [
+      ...document.querySelectorAll(".t-form-item__yzm input"),
       ...document.querySelectorAll("#yzm"),
       ...document.querySelectorAll("input[name='yzm']"),
       ...document.querySelectorAll("input[placeholder*='验证码']"),
@@ -523,6 +536,7 @@ async function readCaptchaPromptText(page) {
     }
 
     const nodes = [
+      input.closest(".t-form-item__yzm")?.parentElement,
       input.parentElement,
       input.closest("td"),
       input.closest("tr"),
@@ -576,7 +590,8 @@ async function waitForSubmitButton(page, timeout = 5000) {
   // #checkfp (blue, hidden until all 4 fields pass validation).
   // Wait for #checkfp to become visible after form is filled.
   try {
-    const button = page.locator("#checkfp");
+    const button = typeof page.url === "function" && page.url().includes("/fpcygzfw/")
+      ? page.getByRole("button", { name: /^查\s*验$/ }) : page.locator("#checkfp");
     await button.waitFor({ state: "visible", timeout });
     return button;
   } catch (_) {
@@ -584,26 +599,66 @@ async function waitForSubmitButton(page, timeout = 5000) {
   }
 }
 
+async function acknowledgeCaptchaError(page) {
+  const messages = page.getByText(/^(?:图片)?验证码(?:错误|失效)[！!。]?$/);
+  let message;
+  for (let i = 0; i < await messages.count(); i++) {
+    const candidate = messages.nth(i);
+    if (await candidate.isVisible().catch(() => false)) { message = candidate; break; }
+  }
+  if (!message) return false;
+  // 新版TDesign Message是自动消失的提示条，不存在“确定”按钮。
+  const isToast = await message.evaluate(el => Boolean(el.closest('.t-message')) &&
+    !el.closest('[role="dialog"], .t-dialog, #popup_container'));
+  if (isToast) {
+    await message.waitFor({ state: "hidden", timeout: 10000 });
+    return true;
+  }
+  const dialog = message.locator('xpath=ancestor::*[@role="dialog" or @id="popup_container" or contains(concat(" ",normalize-space(@class)," ")," t-dialog ")][1]');
+  const scope = await dialog.count() ? dialog : page;
+  const buttons = [scope.getByRole("button", { name: /^\s*确定\s*$/ }),
+    scope.getByText("确定", { exact: true })];
+  for (const candidates of buttons) {
+    for (let i = 0; i < await candidates.count(); i++) {
+      const button = candidates.nth(i);
+      if (!await button.isVisible().catch(() => false)) continue;
+      await button.click({timeout:8000});
+      await message.waitFor({ state: "hidden", timeout: 5000 });
+      return true;
+    }
+  }
+  throw new Error("验证码错误提示不属于自动消失的提示条，且没有可点击的确定按钮；保留现场停止。");
+}
+
 async function forceCloseDialogs(page) {
   if (page.trafficGuard) await page.trafficGuard.check(page);
-  try {
-    await page.evaluate(() => {
-      // 移除所有 <dialog> 元素
-      document.querySelectorAll("dialog").forEach((d) => {
-        try { d.close(); } catch(_) {}
-        d.remove();
-      });
-      // 移除 popup overlay
-      const overlay = document.getElementById("popup_overlay");
-      const container = document.getElementById("popup_container");
-      if (overlay) overlay.remove();
-      if (container) container.remove();
-    });
-    await page.waitForTimeout(200);
-  } catch (_) {}
+  // 点击确定执行网站回调；保留无法确认的异常现场。
+  await acknowledgeCaptchaError(page);
+  await page.waitForTimeout(200);
+}
+
+async function enlargeCaptchaForModel(page, buffer) {
+  return Buffer.from(await page.evaluate(async base64 => {
+    const img = new Image();
+    img.src = "data:image/png;base64," + base64;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth * 4;
+    canvas.height = img.naturalHeight * 4;
+    const context = canvas.getContext("2d");
+    context.imageSmoothingEnabled = false;
+    context.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png").split(",")[1];
+  }, buffer.toString("base64")), "base64");
 }
 
 async function readCaptchaChallenge(page, record, artifactsDir, screenshotBase, attempt, captchaRetry = 0, lastCaptchaHash = null) {
+  // 先完成实际提交间隔等待，再获取当前验证码；等待后的图片不能沿用旧截图。
+  if (page.trafficGuard) {
+    const waited = await page.trafficGuard.wait("submit");
+    await page.trafficGuard.check(page);
+    if (waited > 0) await refreshCaptcha(page, await findCaptchaImage(page));
+  }
   const pageText = await page.locator("body").innerText();
   const promptText = await readCaptchaPromptText(page);
   const amountInfo = resolveVerificationAmount(pageText, record);
@@ -630,29 +685,33 @@ async function readCaptchaChallenge(page, record, artifactsDir, screenshotBase, 
     }
   }
 
+  const capturedAt = nowIso();
   // 刷新图片后重新读提示，避免旧提示与新图片组合。
   const currentPrompt = await readCaptchaPromptText(page);
-  const ready = captchaRule === "full_text" && isPlainCaptchaPrompt(currentPrompt);
+  const ready = isPlainCaptchaPrompt(currentPrompt);
   // 不对颜色筛选或未知提示调用模型。
-  const preprocessed = preprocessCaptchaImages(captchaBuffer, artifactsDir, screenshotBase, attempt, captchaRetry);
-  const ocrBuffer = captchaBuffer;
-  const ocrImagePath = preprocessed.original;
+  const preprocessed = ready ? preprocessCaptchaImages(captchaBuffer, artifactsDir, screenshotBase, attempt, captchaRetry) : { original: null };
+  let ocrBuffer = captchaBuffer;
+  let ocrImagePath = preprocessed.original;
+  if (ready && process.env.CAPTCHA_MODEL_IMAGE_SCALE === "4") {
+    ocrBuffer = await enlargeCaptchaForModel(page, captchaBuffer);
+    ocrImagePath = preprocessed.original.replace(/-original\.png$/, "-model-4x.png");
+    fs.writeFileSync(ocrImagePath, ocrBuffer);
+  }
 
   let candidateBundle = { primaryCaptcha: "", alternativeCaptchas: [] };
   if (ready) {
-    if (page.trafficGuard) {
-      await page.trafficGuard.wait("submit");
-      await page.trafficGuard.check(page);
-    }
-    if (Number.isInteger(page.invoiceOcrAttempts)) page.invoiceOcrAttempts++;
+    if (page.trafficGuard) await page.trafficGuard.check(page);
     try {
       candidateBundle = await collectCaptchaCandidates(ocrBuffer, currentPrompt);
     } catch (error) {
       if (!error.retryable) throw error;
       candidateBundle.confidenceNote = error.message;
+      candidateBundle.rejectionReason = "model_transient_error";
     }
   }
   const captchaCandidates = [candidateBundle.primaryCaptcha, ...candidateBundle.alternativeCaptchas].filter(Boolean);
+  if (captchaCandidates.length && Number.isInteger(page.invoiceOcrAttempts)) page.invoiceOcrAttempts++;
   return {
     pageText,
     promptText: currentPrompt,
@@ -664,10 +723,13 @@ async function readCaptchaChallenge(page, record, artifactsDir, screenshotBase, 
     candidateBundle,
     captchaCandidates,
     captchaHash: currentHash,
+    capturedAt,
+    recognizedAt: ready ? nowIso() : null,
   };
 }
 
 async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempts) {
+  installSubmissionTrace(page);
   const screenshotBase = slugify(`${record.invoice_number}-${record.invoice_date}`);
   const fieldSelectors = {
     invoice_code: ["#fpdm", "input[name='fpdm']", "input[placeholder*='发票代码']"],
@@ -677,10 +739,14 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
     captcha: ["#yzm", "input[name='yzm']", "input[placeholder*='验证码']"],
   };
 
+  for (const [key, selector] of Object.entries(MODERN_FIELDS)) fieldSelectors[key].unshift(selector);
+
   for (let attempt = 1; attempt <= 1; attempt += 1) {
     await forceCloseDialogs(page);
-    await page.goto(VERIFY_URL, { waitUntil: "networkidle", timeout: 60000 });
-    await page.waitForSelector("#fphm", { state: "visible", timeout: 30000 });
+    page.captchaNetwork = [];
+    if (!page.reuseInvoicePage) await page.goto(VERIFY_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    page.reuseInvoicePage = false;
+    await page.waitForSelector(MODERN_FIELDS.invoice_number, { state: "visible", timeout: 30000 });
     await page.waitForTimeout(1000);
 
     // 页面加载后先关闭所有弹窗
@@ -756,6 +822,22 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
     // 关闭填表后可能弹出的 <dialog>（根证书提示等）
     await forceCloseDialogs(page);
 
+    // 新版默认占位图不能拿去OCR；接口失败时保留诊断并停止批次。
+    try {
+      if (typeof page.url === "function" && page.url().includes("/fpcygzfw/")) await page.waitForFunction(() => {
+        const img = document.querySelector('img[width="120"][height="50"]');
+        return img && img.complete && img.naturalWidth > 0 && !/\/code\.[^/]+\.png/.test(img.getAttribute('src') || '');
+      }, null, { timeout: 15000 });
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      const screenshot = path.join(artifactsDir, `${screenshotBase}-captcha-unavailable.png`);
+      await page.screenshot({path:screenshot,fullPage:true});
+      return { invoice_key:buildInvoiceKey(record), verification_status:'website_system_error',
+        verification_message:'新版验证码接口未返回有效图片，等待刷新重试',
+        failure_reason:'modern_captcha_unavailable',captcha_attempts:0,verified_at:nowIso(),
+        result_screenshot:screenshot,captcha_network:page.captchaNetwork || [] };
+    }
+
     // 验证码识别重试循环：最多提交 3 次 full_text 验证码
     const maxFullTextAttempts = Math.min(maxCaptchaAttempts, MAX_FULL_TEXT_ATTEMPTS);
     let challenge = null;
@@ -773,7 +855,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
         artifactsDir,
         screenshotBase,
         attempt,
-        fullTextAttempts,
+        captchaRetryCount,
         lastCaptchaHash
       );
       lastCaptchaHash = challenge.captchaHash;
@@ -795,7 +877,8 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
 
       // full_text：记录本次重试结果
       const retryResult = {
-        retry: fullTextAttempts,
+        retry: captchaRetryCount,
+        valid_attempt: captchaCandidates.length ? fullTextAttempts + 1 : null,
         captcha_rule: captchaRule,
         captcha_rule_display: challenge.captchaRuleDisplay,
         captcha_hint_text: challenge.promptText,
@@ -804,18 +887,38 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
         captcha_preprocessed_path: imagePaths.ocr_used || imagePaths.original,
         confidence_note: candidateBundle?.confidenceNote || null,
         candidate_origins: candidateBundle?.candidateOrigins || [],
+        model_raw_output: candidateBundle?.rawOutput ?? null,
+        content_check: candidateBundle?.contentCheck || null,
+        rejection_reason: candidateBundle?.rejectionReason || null,
+        captured_at: challenge.capturedAt || null,
+        recognized_at: challenge.recognizedAt || null,
+        submitted_at: null,
+        outcome: captchaCandidates.length ? "ready_to_submit" : "recognition_rejected",
       };
       captchaRetryHistory.push(retryResult);
 
       if (captchaCandidates.length === 0) {
-        // 没有识别到验证码，刷新重试
-        fullTextAttempts++;
+        // 空回答、UNKNOWN和说明文字不消耗有效候选的3次预算。
         captchaRetryCount++;
         await refreshCaptcha(page, challenge.captchaImage);
         await page.waitForTimeout(1000);
+        lastCaptchaHash = null;
         continue;
       }
 
+      // 模型返回时再次校验图片和提示，避免后台异步刷新造成旧答案提交。
+      const liveImage = await findCaptchaImage(page);
+      const liveHash = crypto.createHash("md5").update(await liveImage.screenshot()).digest("hex");
+      const livePrompt = await readCaptchaPromptText(page);
+      if (liveHash !== challenge.captchaHash || !isPlainCaptchaPrompt(livePrompt)) {
+        retryResult.outcome = "challenge_changed_before_submit";
+        retryResult.rejection_reason = "challenge_changed_before_submit";
+        retryResult.valid_attempt = null;
+        if (Number.isInteger(page.invoiceOcrAttempts)) page.invoiceOcrAttempts--;
+        captchaRetryCount++;
+        lastCaptchaHash = null;
+        continue;
+      }
       // 填写验证码
       await fillField(page, captchaCandidates[0], fieldSelectors.captcha, "captcha");
       // 等待网站 JS 验证所有字段并激活蓝色查验按钮
@@ -845,8 +948,12 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
       if (page.trafficGuard) {
         await page.trafficGuard.check(page);
       }
-      await submitButton.click();
-      if (page.trafficGuard) page.trafficGuard.lastSubmit = Date.now();
+      page.verificationDialogs = [];
+      page.submissionTrace = { started_at: nowIso(), requests: [] };
+      await clickVerificationButton(page, submitButton);
+      if (page.trafficGuard) page.trafficGuard.markSubmitted();
+      retryResult.submitted_at = nowIso();
+      retryResult.outcome = "submitted";
 
       const outcome = await waitForVerificationOutcome(page);
       let classified = outcome.classified;
@@ -887,7 +994,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
       }
 
       let screenshotFallback = null;
-      if (shouldRetryVerificationStatus(classified.status)) {
+      if (classified.status === "form_still_active" && !page._submissionTraceInstalled) {
         try {
           const modalFallback = modalScreenshotPath
             ? await classifyVerificationScreenshot(modalScreenshotPath)
@@ -918,12 +1025,24 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
 
       // 更新本次重试历史中的结果截图
       if (captchaRetryHistory.length > 0) {
-        captchaRetryHistory[captchaRetryHistory.length - 1].result_screenshot = screenshotPath;
+        const latestRetry = captchaRetryHistory[captchaRetryHistory.length - 1];
+        latestRetry.result_screenshot = screenshotPath;
+        latestRetry.platform_status = classified.status;
+        latestRetry.platform_message = classified.matchedText || classified.message;
+        latestRetry.native_dialogs = [...(page.verificationDialogs || [])];
+        latestRetry.submission_trace = page.submissionTrace || null;
+        if (classified.status === "form_still_active" && page._submissionTraceInstalled) {
+          classified = { status: "request_error", message: submissionFailure(page.submissionTrace) };
+        }
+        latestRetry.outcome = classified.status === "captcha_error" ? "captcha_rejected" : classified.status;
       }
 
       if (shouldRetryVerificationStatus(classified.status)) {
         fullTextAttempts++;
         captchaRetryCount++;
+        // 确认错误弹窗，触发网站的原有恢复逻辑；不能直接删除弹窗DOM。
+        if (classified.status === "captcha_error") await acknowledgeCaptchaError(page);
+        if (fullTextAttempts >= maxFullTextAttempts) break;
         // 网站在提交后可能清空表单字段，重新填写所有字段
         await forceCloseDialogs(page);
         if (record.invoice_code) {
@@ -956,6 +1075,7 @@ async function verifySingleInvoice(page, record, artifactsDir, maxCaptchaAttempt
         invoice_key: buildInvoiceKey(record),
         verification_status: classified.status,
         verification_message: classified.message,
+        failure_reason: classified.status === "request_error" ? classified.message : null,
         captcha_attempts: Math.min(fullTextAttempts + 1, maxFullTextAttempts),
         captcha_rule: captchaRule,
         captcha_rule_display: challenge.captchaRuleDisplay,
@@ -1176,4 +1296,4 @@ if (require.main === module) main().catch((error) => {
   process.exit(1);
 });
 
-module.exports = { parseArgs, buildCaptchaPrompt, readCaptchaChallenge, verifySingleInvoice };
+module.exports = { parseArgs, buildCaptchaPrompt, readCaptchaChallenge, verifySingleInvoice, acknowledgeCaptchaError, enlargeCaptchaForModel };
