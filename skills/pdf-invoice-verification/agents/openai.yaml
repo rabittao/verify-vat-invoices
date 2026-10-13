@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF 电子发票查验归档"
+  short_description: "批量提取并查验 PDF 发票，支持断点续跑、逐票截图归档核对及后台监控"
+  default_prompt: "使用 $pdf-invoice-verification 查验此文件夹中的 PDF 电子发票，跳过已有结果，逐票归档截图并核对清单。"

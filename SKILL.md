@@ -16,6 +16,10 @@ description: Use when Codex needs to scan folders for PDF 增值税发票, rende
 
 不要把它用于机票、火车票、出租车票等非增值税票种。
 
+## 续跑、归档与字段复核
+
+涉及 PDF 同名文件夹归档、剩余票据续跑、预算保持、监控或OCR差异修正时，先读取 [PDF电子发票查验归档技能](skills/pdf-invoice-verification/SKILL.md)。它补充本入口的通用提取流程；`run_pipeline.py` 本身不生成工作区 manifest 和坐标OCR清单。
+
 ## 主流程
 
 1. 运行 `scripts/run_pipeline.py` 做完整流程
