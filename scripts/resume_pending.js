@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { chromium } = require('playwright');
+const { RetryPlan } = require('./retry_plan');
 const { loadEnvFile } = require('./verify_invoices_helpers');
 const { verifySingleInvoice } = require('./verify_invoices');
 const { TrafficGuard, isRateLimitText } = require('./traffic_guard');
@@ -35,6 +36,8 @@ function retryScope(argv) {
 }
 
 async function main() {
+  const planFile = process.argv.slice(2).find(a => a.startsWith('--retry-plan='))?.slice('--retry-plan='.length);
+  const plan = planFile ? new RetryPlan(path.resolve(planFile)) : null;
   const singleInvoice = onlyInvoice(process.argv.slice(2));
   const explicitlyRetry = retryScope(process.argv.slice(2));
   const completed = new Set(process.argv.slice(2).filter(a => a.startsWith('--completed-invoice=')).map(a => a.slice('--completed-invoice='.length)));
@@ -83,7 +86,7 @@ async function main() {
     fs.writeFileSync(resultsPath, JSON.stringify(results, null, 2));
     const manifest = JSON.parse(fs.readFileSync(path.join(root, '.核对工作/manifest.json'), 'utf8'));
     const unresolved = manifest.filter(r => isPending(r, root));
-    const pending = unresolved.filter(r => !completed.has(r['发票号码']) && (!singleInvoice || r['发票号码'] === singleInvoice)).sort((a, b) => Number(explicitlyRetry(b)) - Number(explicitlyRetry(a)));
+    const pending = unresolved.filter(r => !completed.has(r['发票号码']) && (!plan || (plan.includes(r['发票号码']) && plan.used(r['发票号码']) < 3)) && (!singleInvoice || r['发票号码'] === singleInvoice)).sort((a, b) => Number(explicitlyRetry(b)) - Number(explicitlyRetry(a)));
     status({ state: 'starting', total: manifest.length, pending: pending.length });
     fs.writeFileSync(path.join(folder, 'pending-input.json'), JSON.stringify(pending, null, 2));
     console.log(`共 ${manifest.length} 张；已有截图跳过 ${manifest.length - unresolved.length} 张；${singleInvoice ? `单票验证 ${singleInvoice}；` : ''}本次待处理 ${pending.length} 张。`);
@@ -145,10 +148,16 @@ async function main() {
         console.log(`暂缓：${blocked.host} 已被拦截，继续下一张；未识别或提交新验证码。`);
         continue;
       }
-      page.invoiceOcrAttempts = 0;
+      if (plan) plan.bind(page, record.invoice_number);
+      else page.invoiceOcrAttempts = 0;
       let result;
       const captchaRecovery = new CaptchaNetworkRecovery(3);
       for (;;) {
+        if (plan && page.invoiceOcrAttempts >= 3) {
+          result = { invoice_key: record.invoice_number, verification_status: 'captcha_error',
+            failure_reason: 'captcha_budget_exhausted', captcha_attempts: page.invoiceOcrAttempts, verified_at: new Date().toISOString() };
+          break;
+        }
         status({ state: 'running', invoice_number: record.invoice_number, page: record.page_number });
         try {
           result = await verifySingleInvoice(page, record, folder, Math.max(1, 3 - page.invoiceOcrAttempts));
@@ -230,6 +239,7 @@ async function main() {
         result.archive_sha256 = archived.archive_sha256;
         console.log(`归档回读通过：${archived.result_screenshot}；${archived.archive_check}`);
       }
+      result.cumulative_captcha_attempts = page.invoiceOcrAttempts;
       results.push({ source_pdf: record.source_pdf, page_number: record.page_number, ...result });
       fs.writeFileSync(resultsPath, JSON.stringify(results, null, 2));
       if (result.archive_verified) {
